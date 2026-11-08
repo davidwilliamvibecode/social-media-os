@@ -233,7 +233,8 @@ const schema = defineSchema(
       expiresAt: v.number(),
     })
       .index("by_digest", ["digest"])
-      .index("by_owner_client", ["ownerId", "clientId"]),
+      .index("by_owner_client", ["ownerId", "clientId"])
+      .index("by_expiresAt", ["expiresAt"]),
 
     metaCandidates: defineTable({
       ownerId: v.id("users"),
@@ -243,7 +244,9 @@ const schema = defineSchema(
       instagramId: v.optional(v.string()),
       encryptedToken: v.string(),
       expiresAt: v.number(),
-    }).index("by_owner_client", ["ownerId", "clientId"]),
+    })
+      .index("by_owner_client", ["ownerId", "clientId"])
+      .index("by_expiresAt", ["expiresAt"]),
 
     metaAccounts: defineTable({
       ownerId: v.id("users"),
@@ -268,6 +271,9 @@ const schema = defineSchema(
       caption: v.string(),
       mediaUrl: v.optional(v.string()),
       scheduledAt: v.number(),
+      scheduledJobId: v.optional(v.id("_scheduled_functions")),
+      targetPageId: v.optional(v.string()),
+      targetInstagramId: v.optional(v.string()),
       createdAt: v.number(),
       updatedAt: v.number(),
       status: v.union(
