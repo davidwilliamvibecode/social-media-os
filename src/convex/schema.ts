@@ -216,6 +216,16 @@ const schema = defineSchema(
 
     // Conexões Meta e publicações: separação por gestor e cliente.
     // Todos os tokens são criptografados por AES-GCM antes de chegar ao banco.
+    // Credenciais individuais, revogáveis, para conector MCP remoto do Claude.
+    metaMcpKeys: defineTable({
+      ownerId: v.id("users"),
+      digest: v.string(),
+      createdAt: v.number(),
+      revokedAt: v.optional(v.number()),
+    })
+      .index("by_digest", ["digest"])
+      .index("by_owner", ["ownerId"]),
+
     metaOAuthStates: defineTable({
       ownerId: v.id("users"),
       clientId: v.id("clients"),
