@@ -27,6 +27,13 @@ export function MetaSection() {
   const disconnectAccount = useMutation(api.meta.disconnectAccount);
   const schedulePost = useMutation(api.meta.schedulePost);
   const cancelPost = useMutation(api.meta.cancelPost);
+  const issueMcpKey = useAction(api.metaMcp.issueKey);
+  const revokeMcpKey = useMutation(api.metaMcp.revokeKey);
+  const mcpKeys = useQuery(api.metaMcp.listKeys) ?? [];
+  const [newMcpKey, setNewMcpKey] = useState("");
+  const backendUrl = (import.meta.env.VITE_CONVEX_URL as string | undefined) ?? "";
+  const mcpUrl = backendUrl.replace(/\.convex\.cloud\/?$/, ".convex.site/mcp");
+
 
   const [contentChoice, setContentChoice] = useState("");
   const [accountChoice, setAccountChoice] = useState("");
@@ -89,6 +96,58 @@ export function MetaSection() {
         title="Publicações Meta"
         description="Conecte Páginas oficiais dos clientes e agende publicações aprovadas no Instagram e Facebook."
       />
+      <div className="rounded-xl border border-border bg-card p-4 space-y-3">
+        <h2 className="font-semibold text-sm">Conectar o Claude gratuito</h2>
+        <p className="text-xs text-muted-foreground">
+          Gere uma chave exclusiva para sua conta do Social Media OS. Ela permite ao Claude criar rascunhos e consultar contas. Para agendar é necessária aprovação prévia do conteúdo e autorização expressa. Uma nova chave revoga a anterior.
+        </p>
+        <label htmlFor="meta-mcp-url" className="block text-xs">URL MCP (Convex)</label>
+        <input id="meta-mcp-url" className="h-10 w-full rounded-md border border-input bg-background px-3 text-xs" readOnly value={mcpUrl} />
+        <Button size="sm" variant="outline" disabled={busy}
+          onClick={async () => {
+            if (!window.confirm("Criar nova chave Claude? A chave anterior deixará de funcionar.")) return;
+            setBusy(true);
+            try {
+              const token = await issueMcpKey({});
+              setNewMcpKey(token);
+              toast.success("Chave gerada. Copie agora: não será exibida novamente.");
+            } catch { toast.error("Não foi possível gerar uma chave."); }
+            finally { setBusy(false); }
+          }}>
+          Gerar chave para Claude
+        </Button>
+        {newMcpKey && (
+          <div className="rounded-md border p-3 space-y-2">
+            <p className="text-xs font-medium">Copie e guarde a chave. Não envie em chats ou repositórios.</p>
+            <input aria-label="Chave de conexão Claude" type="password" readOnly
+              value={newMcpKey} className="w-full rounded-md border bg-background p-2 text-xs" />
+            <Button size="sm" variant="outline" onClick={() => {
+              void navigator.clipboard.writeText(newMcpKey)
+                .then(() => toast.success("Chave copiada."))
+                .catch(() => toast.error("Cópia não permitida neste navegador."));
+            }}>Copiar chave</Button>
+            <Button size="sm" variant="ghost" onClick={() => setNewMcpKey("")}>Ocultar chave</Button>
+          </div>
+        )}
+        {mcpKeys.filter(key => !key.revokedAt).map(key => (
+          <div key={key.id} className="flex items-center justify-between gap-3 text-xs">
+            <span>Chave ativa desde {new Date(key.createdAt).toLocaleString("pt-BR")}</span>
+            <Button variant="outline" size="sm" disabled={busy} onClick={async () => {
+              if (!window.confirm("Revogar acesso do Claude a este gestor?")) return;
+              setBusy(true);
+              try { await revokeMcpKey({ id: key.id }); setNewMcpKey(""); toast.success("Acesso revogado."); }
+              catch { toast.error("Falha ao revogar."); }
+              finally { setBusy(false); }
+            }}>Revogar</Button>
+          </div>
+        ))}
+        <p className="text-xs text-muted-foreground">
+          No Claude: Personalizar → Conectores → Adicionar conector personalizado → URL acima.
+          Configure a autenticação por cabeçalho Authorization: Bearer [sua chave].
+          A conexão só responderá após a ativação segura de META_MCP_ENABLED no Convex.
+        </p>
+      </div>
+
       <div className="rounded-xl border border-border bg-card p-4 space-y-3">
         <div className="flex items-center gap-2">
           <ShieldCheck className="size-4 text-primary" />
