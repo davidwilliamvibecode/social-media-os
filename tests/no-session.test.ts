@@ -172,6 +172,7 @@ const INTERNAL: Record<string, Kind> = {
   "meta:claimPost": "mutation",
   "meta:completePost": "mutation",
   "meta:deliverPost": "action",
+  "meta:cleanupExpiredConnections": "mutation",
   "metaMcp:identifyUser": "query",
   "metaMcp:persistKey": "mutation",
   "metaMcp:validateKey": "query",
