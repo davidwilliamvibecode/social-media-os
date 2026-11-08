@@ -23,6 +23,9 @@ A mesma instalação Social Media OS poderá organizar vários gestores, com div
 - `src/convex/metaMcp.ts`: conector MCP remoto protegido por chave individual; criação de rascunhos e agendamentos aprovados.
 - `src/convex/http.ts`: endpoints `GET /meta/oauth/callback` e `POST /mcp`.
 - `src/convex/schema.ts`: tabelas de tokens, Páginas, postagens e chaves MCP, sempre vinculadas ao gestor.
+- Proteções complementares: destino Meta fixado no agendamento para evitar postagem em outra Página após reconexão, cancelamento do job Convex, limpeza horária de autorizações OAuth vencidas e apagamento dos tokens quando uma conta é desconectada.
+- Testes adicionais: agendamento e cancelamento, tentativa de publicar na empresa errada, alteração da Página, revogação e expiração de tokens.
+
 - `src/portal/sections/MetaSection.tsx`: painel de contas e publicações e geração/revogação de chave Claude.
 - `tests/meta-graph.test.ts`, `tests/meta-tenancy.test.ts` e `tests/no-session.test.ts`: verificações simuladas de API, segurança e isolamento.
 
