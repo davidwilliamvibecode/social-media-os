@@ -94,10 +94,8 @@ describe("Meta multicliente — isolamento", () => {
 
   test("ferramentas internas MCP validam owner/client, sem retornar dados de terceiros", async () => {
     const { t, ids } = await setup();
-    expect(
-      await t.query(internal.metaMcp.accountSummary, {
-        ownerId: ids.bob, clientId: ids.aliceClient,
-      }),
-    ).toEqual([]);
+    await expect(t.query(internal.metaMcp.accountSummary, {
+      ownerId: ids.bob, clientId: ids.aliceClient,
+    })).rejects.toThrow("Cliente não encontrado.");
   });
 });
