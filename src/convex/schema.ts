@@ -214,6 +214,65 @@ const schema = defineSchema(
       usedAt: v.optional(v.number()),
     }).index("by_identifier", ["identifier"]),
 
+    // Conexões Meta e publicações: separação por gestor e cliente.
+    // Todos os tokens são criptografados por AES-GCM antes de chegar ao banco.
+    metaOAuthStates: defineTable({
+      ownerId: v.id("users"),
+      clientId: v.id("clients"),
+      digest: v.string(),
+      expiresAt: v.number(),
+    }).index("by_digest", ["digest"]),
+
+    metaCandidates: defineTable({
+      ownerId: v.id("users"),
+      clientId: v.id("clients"),
+      pageId: v.string(),
+      pageName: v.string(),
+      instagramId: v.optional(v.string()),
+      encryptedToken: v.string(),
+      expiresAt: v.number(),
+    }).index("by_owner_client", ["ownerId", "clientId"]),
+
+    metaAccounts: defineTable({
+      ownerId: v.id("users"),
+      clientId: v.id("clients"),
+      pageId: v.string(),
+      pageName: v.string(),
+      instagramId: v.optional(v.string()),
+      encryptedToken: v.string(),
+      connectedAt: v.number(),
+      status: v.union(v.literal("active"), v.literal("revoked")),
+    })
+      .index("by_owner_client", ["ownerId", "clientId"])
+      .index("by_owner_page", ["ownerId", "pageId"]),
+
+    metaPosts: defineTable({
+      ownerId: v.id("users"),
+      clientId: v.id("clients"),
+      contentId: v.id("content"),
+      accountId: v.id("metaAccounts"),
+      platform: v.union(v.literal("Facebook"), v.literal("Instagram")),
+      format: v.union(v.literal("text"), v.literal("image"), v.literal("reel")),
+      caption: v.string(),
+      mediaUrl: v.optional(v.string()),
+      scheduledAt: v.number(),
+      createdAt: v.number(),
+      updatedAt: v.number(),
+      status: v.union(
+        v.literal("scheduled"),
+        v.literal("publishing"),
+        v.literal("published"),
+        v.literal("uncertain"),
+        v.literal("failed"),
+        v.literal("cancelled"),
+      ),
+      publishedId: v.optional(v.string()),
+      lastError: v.optional(v.string()),
+    })
+      .index("by_owner", ["ownerId"])
+      .index("by_owner_client", ["ownerId", "clientId"])
+      .index("by_content", ["contentId"]),
+
     workspaces: defineTable({
       ownerId: v.id("users"),
       managerName: v.string(),
