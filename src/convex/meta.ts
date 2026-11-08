@@ -257,7 +257,7 @@ export const disconnectAccount = mutation({
     const ownerId = await activeUser(ctx);
     const row = await ctx.db.get(accountId);
     if (!ownerId || !row || row.ownerId !== ownerId) throw new Error("Conexão não encontrada.");
-    await ctx.db.patch(row._id, { status: "revoked" });
+    await ctx.db.patch(row._id, { status: "revoked", encryptedToken: "" });
   },
 });
 
@@ -305,11 +305,13 @@ export const schedulePost = mutation({
     const postId = await ctx.db.insert("metaPosts", {
       ownerId, clientId: content.clientId, contentId: args.contentId,
       accountId: args.accountId, platform, format,
+      targetPageId: account.pageId, targetInstagramId: account.instagramId,
       caption: content.caption, mediaUrl: args.mediaUrl,
       scheduledAt: args.scheduledAt, createdAt: now, updatedAt: now,
       status: "scheduled",
     });
-    await ctx.scheduler.runAt(args.scheduledAt, internal.meta.deliverPost, { postId });
+    const scheduledJobId = await ctx.scheduler.runAt(args.scheduledAt, internal.meta.deliverPost, { postId });
+    await ctx.db.patch(postId, { scheduledJobId });
     await ctx.db.patch(content._id, { status: "Scheduled" });
     return postId;
   },
@@ -322,6 +324,7 @@ export const cancelPost = mutation({
     const post = await ctx.db.get(postId);
     if (!ownerId || !post || post.ownerId !== ownerId) throw new Error("Agendamento não encontrado.");
     if (post.status !== "scheduled") throw new Error("Publicação já iniciada ou encerrada.");
+    if (post.scheduledJobId) await ctx.scheduler.cancel(post.scheduledJobId);
     await ctx.db.patch(postId, { status: "cancelled", updatedAt: Date.now() });
     const content = await ctx.db.get(post.contentId);
     if (content && content.ownerId === ownerId && content.status === "Scheduled")
@@ -356,6 +359,7 @@ export const claimPost = internalMutation({
     const content = await ctx.db.get(post.contentId);
     if (!account || !client || !content || account.status !== "active" ||
         account.ownerId !== post.ownerId || account.clientId !== post.clientId ||
+        account.pageId !== post.targetPageId || account.instagramId !== post.targetInstagramId ||
         client.ownerId !== post.ownerId || content.ownerId !== post.ownerId ||
         content.clientId !== post.clientId) {
       await ctx.db.patch(postId, { status: "failed", updatedAt: Date.now(), lastError: "Vínculo inválido ou desconectado." });
