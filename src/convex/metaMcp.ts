@@ -217,11 +217,13 @@ export const scheduleFromMcp = internalMutation({
     const postId = await ctx.db.insert("metaPosts", {
       ownerId: args.ownerId, clientId: content.clientId, contentId: content._id,
       accountId: account._id, platform: content.platform, format,
+      targetPageId: account.pageId, targetInstagramId: account.instagramId,
       caption: content.caption, mediaUrl: args.mediaUrl,
       scheduledAt: args.scheduledAt, createdAt: now, updatedAt: now,
       status: "scheduled",
     });
-    await ctx.scheduler.runAt(args.scheduledAt, internal.meta.deliverPost, { postId });
+    const scheduledJobId = await ctx.scheduler.runAt(args.scheduledAt, internal.meta.deliverPost, { postId });
+    await ctx.db.patch(postId, { scheduledJobId });
     await ctx.db.patch(content._id, { status: "Scheduled" });
     return { postId, status: "scheduled" };
   },
