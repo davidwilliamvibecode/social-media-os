@@ -539,7 +539,7 @@ describe("sem sessão: leitura", () => {
     const { t } = await seededWorkspace();
 
     for (const [name, expected] of Object.entries(OPEN_QUERIES)) {
-      const result = await callWithoutSession(t, name, name.startsWith("meta:") ? { clientId: (await t.run(async ctx => (await ctx.db.query("clients").first())?._id)) } : undefined);
+      const result = await callWithoutSession(t, name);
       expect(result, name).toEqual(expected);
       expect(JSON.stringify(result), name).not.toContain(SENTINEL);
     }
@@ -549,7 +549,8 @@ describe("sem sessão: leitura", () => {
     const { t } = await seededWorkspace();
 
     for (const [name, expected] of Object.entries(SESSION_QUERIES)) {
-      const result = await callWithoutSession(t, name);
+      const args = name.startsWith("meta:") ? { clientId: (await t.run(async ctx => (await ctx.db.query("clients").first())?._id)) } : undefined;
+      const result = await callWithoutSession(t, name, args);
       expect(result, name).toEqual(expected);
       expect(JSON.stringify(result), name).not.toContain(SENTINEL);
     }
