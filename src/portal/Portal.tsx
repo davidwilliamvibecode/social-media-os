@@ -45,6 +45,7 @@ import { FinanceSection } from "./sections/FinanceSection";
 import { MeetingsSection } from "./sections/MeetingsSection";
 import { FilesSection } from "./sections/FilesSection";
 import { SettingsSection } from "./sections/SettingsSection";
+import { MetaSection } from "./sections/MetaSection";
 
 const NAV: {
   id: SectionId;
@@ -57,6 +58,7 @@ const NAV: {
   { id: "strategy", label: "Estratégia", icon: Sparkles, group: "Visão geral" },
   { id: "onboarding", label: "Integração", icon: ListChecks, group: "Visão geral" },
   { id: "calendar", label: "Calendário de conteúdo", icon: CalendarDays, group: "Produção" },
+  { id: "meta", label: "Publicações Meta", icon: CalendarDays, group: "Produção" },
   { id: "tasks", label: "Tarefas", icon: CheckSquare, group: "Produção" },
   { id: "approvals", label: "Aprovações", icon: ClipboardCheck, group: "Produção" },
   { id: "requests", label: "Solicitações", icon: FileText, group: "Produção" },
@@ -67,6 +69,7 @@ const NAV: {
 ];
 
 const GROUPS = ["Visão geral", "Produção", "Negócios"];
+const META_UI_ENABLED = import.meta.env.VITE_META_ENABLED === "true";
 
 export default function Portal() {
   const { section } = useParams<{ section: string }>();
@@ -106,7 +109,7 @@ export default function Portal() {
             {group}
           </p>
           <ul className="space-y-0.5">
-            {NAV.filter((item) => item.group === group).map((item) => {
+            {NAV.filter((item) => item.group === group && (item.id !== "meta" || META_UI_ENABLED)).map((item) => {
               const Icon = item.icon;
               const isActive = item.id === active;
               const badge = badgeFor(item.id);
@@ -168,6 +171,8 @@ export default function Portal() {
         return <OnboardingSection ws={ws} focus={focus} />;
       case "calendar":
         return <CalendarSection ws={ws} focus={focus} />;
+      case "meta":
+        return META_UI_ENABLED ? <MetaSection /> : <DashboardSection ws={ws} navigate={go} />;
       case "tasks":
         return <TasksSection ws={ws} focus={focus} />;
       case "approvals":
