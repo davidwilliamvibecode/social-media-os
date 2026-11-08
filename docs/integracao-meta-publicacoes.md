@@ -1,68 +1,104 @@
-# Integração direta Meta Graph API + Social Media OS + Claude
+# Integração direta da Meta com Social Media OS + Claude
 
-**Situação em 2026-11-08:** implementação iniciada, **não habilitada para publicação real**. O módulo `src/data/metaGraph.ts` contém chamadas servidor-servidor para publicar texto/foto em Páginas Facebook e foto/Reel em Instagram profissional, com testes simulados. Nenhum token foi criado, conectado ou publicado.
+**Atualização: 8 de novembro de 2026.** O código foi integrado somente à branch `main`. Nenhuma conta Meta foi conectada, nenhum token real foi coletado e nenhuma publicação real foi feita. A implantação no Convex/Cloudflare ainda depende das configurações descritas abaixo. **Não considerar comercialmente validado antes dos testes reais e da aprovação de permissões da Meta.**
 
-## Objetivo
+## Visão geral do sistema
 
-Reaproveitar o app atual, com gestores isolados por `ownerId`, clientes por `clientId` e fluxo de aprovação existente. Permitir criar/aprovar conteúdo e agendar publicações para **várias empresas**, sem Metricool. Posteriormente, um único conector MCP remoto protegido permitirá que Claude crie rascunhos e solicite agendamentos no mesmo backend.
+A mesma instalação Social Media OS poderá organizar vários gestores, com diversos clientes por gestor. O backend Convex valida `ownerId` e `clientId` em conexões, rascunhos, consultas e publicações.
 
-## Arquitetura aprovada para implementação
+1. O gestor cadastra uma empresa em `Clientes`.
+2. No painel `Publicações Meta`, escolhe essa empresa e usa **Conectar conta Meta**, via Facebook Login oficial.
+3. Depois do OAuth, seleciona uma Página Facebook daquela empresa; uma conta Instagram profissional vinculada pode ser disponibilizada junto.
+4. O gestor/Claude prepara o conteúdo no calendário e passa pelo status **Aprovado**.
+5. O gestor ou Claude agenda com data, horário, Página, legenda e mídia aprovada.
+6. O Convex executa job persistente no horário e publica via Graph API.
+7. O histórico guarda status e ID da Meta. Em falhas de resposta após o envio, mantém **incerto**, sem repetir para evitar duplicação.
 
-1. **OAuth oficial da Meta**. O gestor acessa o aplicativo, seleciona um cliente, usa Facebook Login, concede acesso apenas às Páginas autorizadas e escolhe explicitamente qual Página/Instagram pertence àquele cliente. Não coletar senhas.
-2. **Credenciais separadas**. Metadados de Página/IG por `ownerId + clientId`. Tokens de Página criptografados no servidor em repouso, nunca em `VITE_*`, respostas do navegador, GitHub, logs ou backup JSON.
-3. **Mídia validada**. Antes da aprovação, verificar formato, tipo MIME e URL HTTPS pública temporariamente acessível pela Meta; armazenar ativos em storage apropriado quando necessário.
-4. **Aprovação**. Só agendar conteúdo de um cliente cujo status final esteja **Approved**, com canal, mídia, legenda, destino e fuso horário confirmados. Salvar um snapshot imutável da publicação aprovada.
-5. **Agendamento durável**. `ctx.scheduler.runAt` do Convex executa um job por conta+conteúdo no horário UTC. Não é necessário cron externo para publicações avulsas.
-6. **Publicação controlada**. Um job bloqueia atomicamente duplicações antes da chamada externa. Quando há timeout após envio, registrar estado **incerto** e reconciliar antes de qualquer tentativa de repetição.
-7. **Auditoria**. Registrar somente metadados: cliente, plataforma, data, estado, ID da mídia, erros sanitizados. Reconectar quando token expirar ou for revogado.
-8. **Conector Claude**. Publicar servidor MCP remoto autenticado com `list_clients`, `draft_post`, `list_pending`, `schedule_approved_post` e `get_publication_status`. Todas as operações devem usar o mesmo `ownerId` e conferir `clientId`. Não permitir postagem sem aprovação explícita.
+**Escopo de publicações implantado no backend:** Facebook Page texto/foto e Instagram profissional imagem única/Reel. Stories, carrosséis e vídeos Facebook não foram implementados. O conector do Canva pode ajudar com a criação do conteúdo, mas uma URL de mídia HTTPS pública acessível pela Meta é necessária nas publicações com imagem/vídeo.
 
-### Dependências externas para ativar
+## Código adicionado
 
-- Criar aplicativo em https://developers.facebook.com/apps/
-- Configurar o produto Facebook Login e uma URL de callback HTTPS do backend.
-- Configurar identificador/segredo do app e chave de criptografia **apenas em variáveis secretas do backend Convex**.
-- Autorizações necessárias, conforme modalidade: `pages_show_list`, `pages_read_engagement`, `pages_manage_posts`, `instagram_basic` e `instagram_content_publish`. Verificar permissões e recursos atuais diretamente no painel Meta.
-- Contas do Instagram **profissionais**, vinculadas à Página quando usado Facebook Login; perfis pessoais não são suportados para publicação via esta modalidade.
-- Em acesso a empresas que não são administradoras/testadoras do app, solicitar **acesso avançado/App Review** e eventual verificação do negócio, conforme requisitos atuais da Meta.
-- Não é possível concluir o teste de publicação real sem uma Página/Instagram de teste autorizados e credenciais aprovadas.
+- `src/data/metaGraph.ts`: adaptador de publicação na API Meta; tokens em header, erros sanitizados.
+- `src/convex/meta.ts`: OAuth de Páginas, criptografia AES-GCM de tokens em repouso, conexão por cliente, agendamento persistente, verificação de status e proteção contra duplicação.
+- `src/convex/metaMcp.ts`: conector MCP remoto protegido por chave individual; criação de rascunhos e agendamentos aprovados.
+- `src/convex/http.ts`: endpoints `GET /meta/oauth/callback` e `POST /mcp`.
+- `src/convex/schema.ts`: tabelas de tokens, Páginas, postagens e chaves MCP, sempre vinculadas ao gestor.
+- `src/portal/sections/MetaSection.tsx`: painel de contas e publicações e geração/revogação de chave Claude.
+- `tests/meta-graph.test.ts`, `tests/meta-tenancy.test.ts` e `tests/no-session.test.ts`: verificações simuladas de API, segurança e isolamento.
 
-### Escopo inicial
+### Flags de segurança
 
-- Facebook Pages: textos e imagens.
-- Instagram profissional: imagem única e Reel.
-- Carrosséis, Stories, múltiplas imagens e relatórios de insights entram apenas após validar os fluxos centrais.
-- Nada será publicado enquanto a aprovação e integração OAuth não estiverem completas.
+Não ativar sem terminar a implantação e os testes reais:
 
-### Estado do código
+| Local | Nome | Valor para ativar |
+| --- | --- | --- |
+| Cloudflare Pages (build) | `VITE_META_ENABLED` | `true` (exibe a interface) |
+| Convex (backend) | `META_PUBLISHING_ENABLED` | `true` (autoriza agendamento e execução real) |
+| Convex (backend) | `META_MCP_ENABLED` | `true` (habilita conector Claude) |
 
-- `src/data/metaGraph.ts`: biblioteca de execução, **não ligada à UI nem ao scheduler**.
-- `tests/meta-graph.test.ts`: testes locais sem chamadas à Meta.
-- OAuth, armazenamento criptografado, scheduling com guarda de duplicações, MCP e UI: **pendentes**.
+**Default com flags ausentes é seguro: desativado.** Não declarar testes reais concluídos a partir dos testes simulados.
 
-## Passos para validação
+### Variáveis obrigatórias no Convex (nunca expor)
 
-1. CI: lint, build e testes simulados.
-2. Configuração da Meta (sem tokens em conversa).
-3. Login OAuth em conta própria e Página de teste.
-4. Agendar e cancelar publicação fictícia na própria Página.
-5. Publicação real de teste, conferindo ID, horário, URL e status.
-6. Duas contas distintas: confirmar que gestor A não acessa contas/postagens do gestor B.
-7. Dois clientes do mesmo gestor: impedir que a mídia do cliente A seja publicada na Página do cliente B.
-8. Falhas: expiração de token, URL de mídia inválida, API indisponível, duplicação e cancelamento.
-9. App Review para uso comercial por terceiros.
-10. Só liberar clientes após todos os testes acima.
+- `META_APP_ID`: App ID da Meta.
+- `META_APP_SECRET`: segredo do aplicativo Meta.
+- `META_GRAPH_VERSION`: versão da Graph API compatível e autorizada (formato `vXX.X`).
+- `META_REDIRECT_URI`: URL exata do callback no Convex, como `https://SEU-DEPLOYMENT.convex.site/meta/oauth/callback`.
+- `META_FRONTEND_ORIGIN`: origem exata do site Social Media OS (sem barra final), como `https://SEU-PROJETO.pages.dev`.
+- `META_TOKEN_KEY_B64`: chave AES-GCM de **32 bytes**, em codificação Base64URL, gerada localmente por gerador criptográfico seguro. Guarde cópia em gerenciador de segredos; perda impede descriptografar tokens antigos.
+- Flags opcionais acima para habilitação controlada.
 
-## Conector do Claude gratuito
+Jamais inserir `META_APP_SECRET`, `META_TOKEN_KEY_B64` ou tokens de Páginas em variáveis `VITE_*`, issues, pull requests, e-mails ou chats.
 
-A Anthropic permite um conector MCP personalizado no Free:
-https://support.claude.com/pt/articles/11175166-comece-com-conectores-personalizados-usando-mcp-remoto
+## Etapas manuais para conectar empresas
 
-O conector precisará de autenticação independente e escopo estrito. Não basta o plugin `Meta Ads`: campanhas pagas e posts orgânicos são produtos distintos.
+1. Acesse https://developers.facebook.com/apps/ e crie um aplicativo do tipo adequado a Facebook Login e publicação.
+2. Cadastre a URI exata do callback do Convex e os domínios permitidos. O uso de `*.pages.dev` na interface não elimina a necessidade de URI HTTPS válida e configuração da Meta.
+3. Solicite apenas as permissões necessárias, conforme revisão atual da Meta: `pages_show_list`, `pages_read_engagement`, `pages_manage_posts`, `instagram_basic`, `instagram_content_publish`.
+4. Para teste inicial, use uma Página de teste sob sua administração e uma conta Instagram profissional vinculada. As credenciais são concedidas por Facebook Login; clientes **não compartilham senhas**.
+5. Antes de conectar contas comerciais de empresas externas, obtenha o nível de acesso/avaliação exigido pela Meta (App Review, Advanced Access e eventual verificação do negócio).
+6. Configure segredos somente no Convex e habilite `VITE_META_ENABLED=true` no build Cloudflare Pages para visualizar a tela de conexão.
+7. Mantenha `META_PUBLISHING_ENABLED` desativado até concluir teste de OAuth, separação entre empresas, aprovação, cancelamento, agendamento e publicação de teste.
 
-## Referências oficiais
+## Claude gratuito — conector próprio
 
-- https://www.postman.com/meta/instagram/collection/6yqw8pt/instagram-api
-- https://docs.convex.dev/scheduling/scheduled-functions
-- https://developers.facebook.com/docs/permissions/
-- https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp
+O Claude Free oferece **um conector MCP remoto personalizado**, conforme https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp.
+
+1. No Social Media OS, abra `Publicações Meta` e gere uma chave de integração. Ela é exibida uma vez; emitir nova revoga a antiga.
+2. Depois de ativar `META_MCP_ENABLED=true` e publicar o backend, abra **Claude → Personalizar → Conectores → Adicionar conector personalizado**.
+3. Informe `https://SEU-DEPLOYMENT.convex.site/mcp`.
+4. Selecione autenticação compatível com cabeçalho personalizado e configure `Authorization` com valor `Bearer SUA-CHAVE`. Não coloque a chave no URL.
+5. Habilite o conector no Projeto Social Media Studio.
+
+Ferramentas oferecidas:
+- `list_clients`: lista empresas do gestor.
+- `create_draft`: cria rascunho de post para uma empresa.
+- `list_approved`: lista conteúdos aprovados de determinada empresa.
+- `list_accounts`: lista as Páginas vinculadas, sem credenciais.
+- `list_posts`: consulta agendamentos e resultados.
+- `schedule_approved`: agenda conteúdo já aprovado, para conta correta, e exige `confirm=true`.
+
+**O Claude não recebe os tokens Meta**. A chave MCP dá acesso somente ao gestor correspondente e pode ser revogada no Social Media OS. Não informar a chave em conversas com o Claude: fornecê-la apenas no campo seguro de configuração do conector.
+
+## Verificações mínimas para lançar com vários clientes
+
+- [ ] GitHub CI: build, lint, testes de segurança e testes de Graph API simulados aprovados.
+- [ ] Convex backend publicado com variáveis secretas em produção.
+- [ ] Interface Cloudflare Pages publicada, com o botão Meta visível.
+- [ ] OAuth real validado com Página/Instagram próprios.
+- [ ] Post de teste realmente publicado pelo sistema e conferido na plataforma Meta.
+- [ ] Dois gestores: nenhum acessa contas, rascunhos ou postagens do outro.
+- [ ] Duas empresas do mesmo gestor: impossível escolher Página errada.
+- [ ] Cancelamento antes do horário impede publicação.
+- [ ] Falha de rede após envio não causa postagem duplicada.
+- [ ] Chave MCP criada, testada e revogada com sucesso no Claude.
+- [ ] Revisão das permissões Meta aprovada para contas de empresas externas.
+- [ ] Operação com limites/custos do Convex observados e suporte definido.
+
+## Links oficiais
+
+- Meta Developer: https://developers.facebook.com/
+- API Instagram: https://www.postman.com/meta/instagram/collection/6yqw8pt/instagram-api
+- Permissões Meta: https://developers.facebook.com/docs/permissions/
+- Convex scheduling: https://docs.convex.dev/scheduling/scheduled-functions
+- Claude MCP: https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp
