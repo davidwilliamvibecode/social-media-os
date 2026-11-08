@@ -93,6 +93,26 @@ async function getOwned(
 }
 
 /** Rejeita gravações que apontem para um cliente de outra pessoa. */
+const META_CLIENT_TABLES = [
+  "metaOAuthStates", "metaCandidates", "metaAccounts", "metaPosts",
+] as const;
+
+/** Exclui também credenciais e agendamentos vinculados ao cliente apagado. */
+async function deleteMetaClientData(
+  ctx: MutationCtx, ownerId: Owner, clientId: Id<"clients">,
+) {
+  for (const table of META_CLIENT_TABLES) {
+    const rows = await db(ctx).query(table)
+      .withIndex("by_owner_client", (q: any) => q.eq("ownerId", ownerId).eq("clientId", clientId))
+      .collect() as any[];
+    for (const row of rows) {
+      if (row.ownerId === ownerId && row.clientId === clientId) {
+        await ctx.db.delete(row._id);
+      }
+    }
+  }
+}
+
 async function assertOwnedClient(ctx: Ctx, ownerId: Owner, clientId?: string) {
   if (!clientId) return;
   const client = await getOwned(ctx, ownerId, "clients", clientId);
@@ -210,6 +230,7 @@ export const removeClient = mutation({
     const doc = await getOwned(ctx, ownerId, "clients", id);
     if (!doc)
       throw new Error("Cliente não encontrado neste espaço de trabalho");
+    await deleteMetaClientData(ctx, ownerId, doc._id);
     // Remove tudo que pertence ao cliente para não sobrar registro órfão.
     for (const table of OWNED_TABLES.filter(
       (t): t is PerClientTable => t !== "clients",
@@ -639,6 +660,10 @@ export const clearWorkspace = mutation({
   args: {},
   handler: async (ctx) => {
     const ownerId = await requireOwner(ctx);
+    const ownedClients = await listOwned(ctx, ownerId, "clients");
+    for (const client of ownedClients) await deleteMetaClientData(ctx, ownerId, client._id);
+    const keys = await ctx.db.query("metaMcpKeys").withIndex("by_owner", q => q.eq("ownerId", ownerId)).collect();
+    for (const key of keys) await ctx.db.delete(key._id);
     for (const table of OWNED_TABLES) {
       const rows = await listOwned(ctx, ownerId, table);
       for (const row of rows) await ctx.db.delete(row._id);
