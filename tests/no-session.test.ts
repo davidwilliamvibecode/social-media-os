@@ -199,7 +199,7 @@ async function callWithoutSession(
     (r) => r.module === moduleName && r.exportName === exportName,
   );
   const fn = reference(route) as any;
-  if (route.kind === "query") return await t.query(fn);
+  if (route.kind === "query") return await t.query(fn, args as any);
   if (route.kind === "mutation") return await t.mutation(fn, args as any);
   return await t.action(fn, args as any);
 }
