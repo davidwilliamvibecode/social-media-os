@@ -231,7 +231,9 @@ const schema = defineSchema(
       clientId: v.id("clients"),
       digest: v.string(),
       expiresAt: v.number(),
-    }).index("by_digest", ["digest"]),
+    })
+      .index("by_digest", ["digest"])
+      .index("by_owner_client", ["ownerId", "clientId"]),
 
     metaCandidates: defineTable({
       ownerId: v.id("users"),
