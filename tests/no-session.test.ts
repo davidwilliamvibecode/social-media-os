@@ -114,6 +114,7 @@ const SESSION_QUERIES: Record<string, unknown> = {
   "meta:listCandidates": [],
   "meta:listAccounts": [],
   "meta:listPosts": [],
+  "metaMcp:listKeys": [],
   "users:currentUser": null,
 };
 
@@ -150,6 +151,7 @@ const SESSION_MUTATIONS = [
   "meta:disconnectAccount",
   "meta:schedulePost",
   "meta:cancelPost",
+  "metaMcp:revokeKey",
 ];
 
 /** Nunca chamáveis pelo cliente (o Convex recusa antes de executar). */
@@ -170,9 +172,18 @@ const INTERNAL: Record<string, Kind> = {
   "meta:claimPost": "mutation",
   "meta:completePost": "mutation",
   "meta:deliverPost": "action",
+  "metaMcp:identifyUser": "query",
+  "metaMcp:persistKey": "mutation",
+  "metaMcp:validateKey": "query",
+  "metaMcp:clientSummary": "query",
+  "metaMcp:approvedSummary": "query",
+  "metaMcp:accountSummary": "query",
+  "metaMcp:scheduledSummary": "query",
+  "metaMcp:createDraft": "mutation",
+  "metaMcp:scheduleFromMcp": "mutation",
 };
 
-const SESSION_ACTIONS = ["access:issueRecoveryCode", "meta:startConnection"];
+const SESSION_ACTIONS = ["access:issueRecoveryCode", "meta:startConnection", "metaMcp:issueKey"];
 
 const CLASSIFIED = new Set([
   ...SESSION_ACTIONS,
@@ -340,6 +351,9 @@ async function seededWorkspace() {
       connectedAt: Date.now(),
       status: "active",
     });
+    const mcpKey = await ctx.db.insert("metaMcpKeys", {
+      ownerId: owner, digest: "test-mcp-digest", createdAt: Date.now(),
+    });
     const metaPost = await ctx.db.insert("metaPosts", {
       ownerId: owner,
       clientId: client,
@@ -361,6 +375,7 @@ async function seededWorkspace() {
       candidate,
       account,
       metaPost,
+      mcpKey,
       task,
       request,
       meeting,
@@ -391,6 +406,7 @@ async function snapshot(t: ReturnType<typeof convexTest>) {
     "metaCandidates",
     "metaAccounts",
     "metaPosts",
+    "metaMcpKeys",
   ] as const;
 
   return await t.run(async (ctx) => {
@@ -454,6 +470,8 @@ function writeArgs(
     "meta:disconnectAccount": { accountId: ids.account },
     "meta:schedulePost": { contentId: ids.content, accountId: ids.account, scheduledAt: Date.now() + 100_000 },
     "meta:cancelPost": { postId: ids.metaPost },
+    "metaMcp:revokeKey": { id: ids.mcpKey },
+    "metaMcp:issueKey": {},
   };
 
   const args = table[name];
