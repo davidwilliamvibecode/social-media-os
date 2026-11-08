@@ -267,6 +267,8 @@ export const schedulePost = mutation({
     scheduledAt: v.number(), mediaUrl: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    if (process.env.META_PUBLISHING_ENABLED !== "true")
+      throw new Error("Publicações automáticas Meta estão desativadas.");
     const ownerId = await activeUser(ctx);
     const content = await ctx.db.get(args.contentId);
     const account = await ctx.db.get(args.accountId);
@@ -345,6 +347,10 @@ export const claimPost = internalMutation({
   handler: async (ctx, { postId }) => {
     const post = await ctx.db.get(postId);
     if (!post || post.status !== "scheduled" || post.scheduledAt > Date.now()) return null;
+    if (process.env.META_PUBLISHING_ENABLED !== "true") {
+      await ctx.db.patch(postId, { status: "failed", updatedAt: Date.now(), lastError: "Integração desativada." });
+      return null;
+    }
     const account = await ctx.db.get(post.accountId);
     const client = await ctx.db.get(post.clientId);
     const content = await ctx.db.get(post.contentId);
