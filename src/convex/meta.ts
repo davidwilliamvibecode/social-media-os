@@ -63,12 +63,6 @@ function redirectResult(kind: "success" | "denied" | "error" | "no-pages"): Resp
   dest.searchParams.set("connection", kind);
   return new Response(null, { status: 302, headers: { Location: dest.toString(), "Cache-Control": "no-store" } });
 }
-async function userAndClient(ctx: { db: import("./_generated/server").QueryCtx["db"]; auth: import("./_generated/server").QueryCtx["auth"] }, clientId: import("./_generated/dataModel").Id<"clients">) {
-  // activeUser expects a full Convex QueryCtx, so checks are done in handlers.
-  const client = await ctx.db.get(clientId);
-  return client;
-}
-
 export const verifyClient = internalQuery({
   args: { clientId: v.id("clients") },
   handler: async (ctx, { clientId }) => {
@@ -147,7 +141,7 @@ export const saveCandidates = internalMutation({
   },
 });
 
-/** Callback público da Meta: state одно uso, dados armazenados apenas criptografados. */
+/** Callback público da Meta: state de uso único, dados armazenados apenas criptografados. */
 export const oauthCallback = httpAction(async (ctx, request) => {
   try {
     const url = new URL(request.url);
@@ -284,7 +278,7 @@ export const schedulePost = mutation({
     const platform = content.platform;
     if (platform !== "Facebook" && platform !== "Instagram") throw new Error("Plataforma não suportada.");
     if (platform === "Instagram" && !account.instagramId) throw new Error("Conta Instagram não vinculada.");
-    let format: "text" | "image" | "reel" = "text";
+    let format: "text" | "image" | "reel";
     if (platform === "Facebook") {
       if (content.format === "Reel" || content.format === "Carousel" || content.format === "Story")
         throw new Error("Formato Facebook ainda não suportado.");
