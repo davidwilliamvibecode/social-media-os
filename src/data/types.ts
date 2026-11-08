@@ -228,6 +228,7 @@ export interface WorkspaceProfile {
 export type SectionId =
   | "dashboard"
   | "clients"
+  | "meta"
   | "calendar"
   | "tasks"
   | "approvals"
@@ -242,6 +243,7 @@ export type SectionId =
 export const SECTIONS = [
   "dashboard",
   "clients",
+  "meta",
   "calendar",
   "tasks",
   "approvals",
