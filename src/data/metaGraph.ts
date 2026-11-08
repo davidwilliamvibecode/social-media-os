@@ -57,15 +57,18 @@ type MetaResponse = {
 };
 
 export class MetaGraphError extends Error {
-  constructor(
-    public readonly status: number,
-    public readonly code?: number,
-    public readonly subcode?: number,
-  ) {
+  readonly status: number;
+  readonly code?: number;
+  readonly subcode?: number;
+
+  constructor(status: number, code?: number, subcode?: number) {
     super(
       `Meta recusou a operação (HTTP ${status}${code ? `, código ${code}` : ""}${subcode ? `, subcódigo ${subcode}` : ""}).`,
     );
     this.name = "MetaGraphError";
+    this.status = status;
+    this.code = code;
+    this.subcode = subcode;
   }
 }
 
