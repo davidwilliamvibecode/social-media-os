@@ -169,7 +169,7 @@ export const oauthCallback = httpAction(async (ctx, request) => {
     const userToken = typeof refreshed.access_token === "string" ? refreshed.access_token : shortToken;
 
     const pagesURL = new URL("https://graph.facebook.com/" + version() + "/me/accounts");
-    pagesURL.searchParams.set("fields", "id,name,access_token,instagram_business_account{id}");
+    pagesURL.searchParams.set("fields", "id,name,access_token,tasks,instagram_business_account{id}");
     pagesURL.searchParams.set("limit", "100");
     const pages = await graphJSON(pagesURL, userToken);
     const rawPages = Array.isArray(pages.data) ? pages.data : [];
@@ -179,6 +179,12 @@ export const oauthCallback = httpAction(async (ctx, request) => {
       const page = raw as Record<string, unknown>;
       if (typeof page.id !== "string" || typeof page.name !== "string" ||
           typeof page.access_token !== "string") continue;
+      // Não oferecer como destino uma Página cuja lista de tarefas explicita
+      // ausência da permissão de criar conteúdo. Algumas respostas omitem
+      // "tasks"; nesse caso a Graph API ainda validará o direito no envio.
+      const tasks = page.tasks;
+      if (Array.isArray(tasks) &&
+          !tasks.includes("CREATE_CONTENT") && !tasks.includes("MANAGE")) continue;
       const ig = page.instagram_business_account;
       const instagramId = ig && typeof ig === "object" && "id" in ig && typeof ig.id === "string" ? ig.id : undefined;
       selected.push({
