@@ -12,7 +12,7 @@ Aplicação React + TypeScript + Vite + Convex para **um gestor de social media 
 - Exportação/importação de backup JSON do workspace
 - CSV dos dados reais em Configurações, com filtro por cliente; planilha de referência de 29 abas separada.
 
-**Não inclui** postagem automática, métricas conectadas às redes sociais, portal do cliente, cobrança automática, campanhas por e-mail ou sincronização da planilha com o banco. Não prometa esses recursos. O acesso inicial usa **entrega assistida do convite**, sem domínio próprio ou serviço de e-mail. A integração Resend é opcional e permanece sem configuração de envio; consulte [convites-resend.md](docs/convites-resend.md).
+**Publicação automática Meta (código em preparação):** existe uma integração opcional com Facebook Pages e Instagram profissional, incluindo OAuth, agendamento Convex e conector Claude. Ela permanece **desativada por padrão**, sem testes reais de postagem ou aprovação comercial da Meta; não ofereça publicação automática a clientes até validar a implantação descrita em [integração Meta](docs/integracao-meta-publicacoes.md). **Não inclui** métricas conectadas às redes sociais, portal do cliente, cobrança automática, campanhas por e-mail ou sincronização da planilha com o banco. O acesso inicial usa **entrega assistida do convite**, sem domínio próprio ou serviço de e-mail. A integração Resend é opcional e permanece sem configuração de envio; consulte [convites-resend.md](docs/convites-resend.md).
 
 ## Arquitetura única
 
