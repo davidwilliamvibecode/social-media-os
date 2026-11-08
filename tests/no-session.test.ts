@@ -111,6 +111,9 @@ const SESSION_QUERIES: Record<string, unknown> = {
   "portal:listMeetings": [],
   "portal:listDeliverables": [],
   "portal:listFinance": [],
+  "meta:listCandidates": [],
+  "meta:listAccounts": [],
+  "meta:listPosts": [],
   "users:currentUser": null,
 };
 
@@ -143,6 +146,10 @@ const SESSION_MUTATIONS = [
   "portal:clearWorkspace",
   "portal:importWorkspace",
   "demo:seedDemo",
+  "meta:selectAccount",
+  "meta:disconnectAccount",
+  "meta:schedulePost",
+  "meta:cancelPost",
 ];
 
 /** Nunca chamáveis pelo cliente (o Convex recusa antes de executar). */
@@ -156,9 +163,16 @@ const INTERNAL: Record<string, Kind> = {
   "auth:store": "mutation",
   "repair:relinkOrphanInvoices": "mutation",
   "sessions:cleanupInactiveSessions": "mutation",
+  "meta:verifyClient": "query",
+  "meta:reserveState": "mutation",
+  "meta:redeemState": "mutation",
+  "meta:saveCandidates": "mutation",
+  "meta:claimPost": "mutation",
+  "meta:completePost": "mutation",
+  "meta:deliverPost": "action",
 };
 
-const SESSION_ACTIONS = ["access:issueRecoveryCode"];
+const SESSION_ACTIONS = ["access:issueRecoveryCode", "meta:startConnection"];
 
 const CLASSIFIED = new Set([
   ...SESSION_ACTIONS,
@@ -309,10 +323,44 @@ async function seededWorkspace() {
       density: "comfortable",
     });
 
+    const candidate = await ctx.db.insert("metaCandidates", {
+      ownerId: owner,
+      clientId: client,
+      pageId: "123456789",
+      pageName: SENTINEL,
+      encryptedToken: "cifra-de-teste",
+      expiresAt: Date.now() + 30_000,
+    });
+    const account = await ctx.db.insert("metaAccounts", {
+      ownerId: owner,
+      clientId: client,
+      pageId: "123456789",
+      pageName: SENTINEL,
+      encryptedToken: "cifra-de-teste",
+      connectedAt: Date.now(),
+      status: "active",
+    });
+    const metaPost = await ctx.db.insert("metaPosts", {
+      ownerId: owner,
+      clientId: client,
+      contentId: content,
+      accountId: account,
+      platform: "Facebook",
+      format: "text",
+      caption: SENTINEL,
+      scheduledAt: Date.now() + 100_000,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      status: "scheduled",
+    });
+
     return {
       owner,
       client,
       content,
+      candidate,
+      account,
+      metaPost,
       task,
       request,
       meeting,
@@ -339,6 +387,10 @@ async function snapshot(t: ReturnType<typeof convexTest>) {
     "finance",
     "workspaces",
     "turnstileGrants",
+    "metaOAuthStates",
+    "metaCandidates",
+    "metaAccounts",
+    "metaPosts",
   ] as const;
 
   return await t.run(async (ctx) => {
@@ -397,6 +449,11 @@ function writeArgs(
     "portal:importWorkspace": { snapshot: {} },
     "demo:seedDemo": {},
     "access:issueRecoveryCode": { password: "test-only-password" },
+    "meta:startConnection": { clientId: ids.client },
+    "meta:selectAccount": { candidateId: ids.candidate },
+    "meta:disconnectAccount": { accountId: ids.account },
+    "meta:schedulePost": { contentId: ids.content, accountId: ids.account, scheduledAt: Date.now() + 100_000 },
+    "meta:cancelPost": { postId: ids.metaPost },
   };
 
   const args = table[name];
@@ -482,7 +539,7 @@ describe("sem sessão: leitura", () => {
     const { t } = await seededWorkspace();
 
     for (const [name, expected] of Object.entries(OPEN_QUERIES)) {
-      const result = await callWithoutSession(t, name);
+      const result = await callWithoutSession(t, name, name.startsWith("meta:") ? { clientId: (await t.run(async ctx => (await ctx.db.query("clients").first())?._id)) } : undefined);
       expect(result, name).toEqual(expected);
       expect(JSON.stringify(result), name).not.toContain(SENTINEL);
     }
