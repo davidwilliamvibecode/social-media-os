@@ -99,3 +99,112 @@ describe("Meta multicliente — isolamento", () => {
     })).rejects.toThrow("Cliente não encontrado.");
   });
 });
+
+describe("Meta multicliente — agendamento seguro", () => {
+  /** A flag fica habilitada SOMENTE no teste em memória. Nenhuma chamada externa é feita. */
+  async function withPublishingEnabled<T>(fn: () => Promise<T>): Promise<T> {
+    const previous = process.env.META_PUBLISHING_ENABLED;
+    process.env.META_PUBLISHING_ENABLED = "true";
+    try {
+      return await fn();
+    } finally {
+      if (previous === undefined) delete process.env.META_PUBLISHING_ENABLED;
+      else process.env.META_PUBLISHING_ENABLED = previous;
+    }
+  }
+
+  test("agendar e cancelar mantém snapshot e devolve conteúdo a Aprovado", async () => {
+    await withPublishingEnabled(async () => {
+      const { alice, t, ids } = await setup();
+      const when = Date.now() + 60 * 60_000;
+      const postId = await alice.mutation(api.meta.schedulePost, {
+        contentId: ids.content, accountId: ids.account, scheduledAt: when,
+      });
+      const row = await t.run(ctx => ctx.db.get(postId));
+      expect(row?.status).toBe("scheduled");
+      expect(row?.targetPageId).toBe("123456789");
+      expect(row?.scheduledJobId).toBeDefined();
+      expect((await t.run(ctx => ctx.db.get(ids.content)))?.status).toBe("Scheduled");
+
+      await alice.mutation(api.meta.cancelPost, { postId });
+      const updated = await t.run(ctx => ctx.db.get(postId));
+      expect(updated?.status).toBe("cancelled");
+      expect((await t.run(ctx => ctx.db.get(ids.content)))?.status).toBe("Approved");
+    });
+  });
+
+  test("não permite programar publicação para conta de outra empresa", async () => {
+    await withPublishingEnabled(async () => {
+      const { alice, t, ids } = await setup();
+      const foreignAccount = await t.run(ctx => ctx.db.insert("metaAccounts", {
+        ownerId: ids.alice,
+        clientId: ids.aliceOtherClient,
+        pageId: "99999888888",
+        pageName: "Outra empresa",
+        encryptedToken: "cifra-teste",
+        connectedAt: Date.now(),
+        status: "active",
+      }));
+      await expect(alice.mutation(api.meta.schedulePost, {
+        contentId: ids.content, accountId: foreignAccount,
+        scheduledAt: Date.now() + 100000,
+      })).rejects.toThrow("sem acesso");
+    });
+  });
+
+  test("alteração de Página após agendamento bloqueia publicação no destino trocado", async () => {
+    await withPublishingEnabled(async () => {
+      const { alice, t, ids } = await setup();
+      const postId = await alice.mutation(api.meta.schedulePost, {
+        contentId: ids.content, accountId: ids.account,
+        scheduledAt: Date.now() + 100000,
+      });
+      await t.run(async (ctx) => {
+        await ctx.db.patch(ids.account, { pageId: "77777888888" });
+        // Em teste, antecipa apenas a verificação do job (sem Graph API).
+        await ctx.db.patch(postId, { scheduledAt: Date.now() - 1000 });
+      });
+      const result = await t.mutation(internal.meta.claimPost, { postId });
+      expect(result).toBeNull();
+      const row = await t.run(ctx => ctx.db.get(postId));
+      expect(row?.status).toBe("failed");
+      expect(row?.lastError).toContain("Vínculo");
+    });
+  });
+
+  test("desconectar revoga credencial sem preservar o token criptografado", async () => {
+    const { alice, t, ids } = await setup();
+    await alice.mutation(api.meta.disconnectAccount, { accountId: ids.account });
+    const account = await t.run(ctx => ctx.db.get(ids.account));
+    expect(account?.status).toBe("revoked");
+    expect(account?.encryptedToken).toBe("");
+  });
+
+  test("limpa estados OAuth e tokens temporários vencidos", async () => {
+    const { t, ids } = await setup();
+    const expired = await t.run(async (ctx) => {
+      const candidate = await ctx.db.insert("metaCandidates", {
+        ownerId: ids.alice, clientId: ids.aliceClient,
+        pageId: "3333344444", pageName: "Expirada",
+        encryptedToken: "cifra",
+        expiresAt: Date.now() - 1000,
+      });
+      const state = await ctx.db.insert("metaOAuthStates", {
+        ownerId: ids.alice, clientId: ids.aliceClient,
+        digest: "digest-teste-unico",
+        expiresAt: Date.now() - 1000,
+      });
+      return { candidate, state };
+    });
+    expect(await t.mutation(internal.meta.cleanupExpiredConnections, {}))
+      .toEqual({ candidates: 1, states: 1 });
+    const after = await t.run(async (ctx) => ({
+      candidate: await ctx.db.get(expired.candidate),
+      state: await ctx.db.get(expired.state),
+      stillValid: await ctx.db.get(ids.candidate),
+    }));
+    expect(after.candidate).toBeNull();
+    expect(after.state).toBeNull();
+    expect(after.stillValid).not.toBeNull();
+  });
+});
