@@ -19,4 +19,12 @@ crons.daily(
   {},
 );
 
+// Descarta OAuth não concluídos e tokens de Página ainda não selecionados.
+crons.hourly(
+  "cleanup-expired-meta-oauth",
+  { minuteUTC: 17 },
+  internal.meta.cleanupExpiredConnections,
+  {},
+);
+
 export default crons;
