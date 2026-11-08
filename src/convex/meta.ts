@@ -194,6 +194,20 @@ export const oauthCallback = httpAction(async (ctx, request) => {
   }
 });
 
+/** Remove tokens transitórios mesmo quando o usuário abandona o OAuth. */
+export const cleanupExpiredConnections = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const now = Date.now();
+    const candidates = await ctx.db.query("metaCandidates")
+      .withIndex("by_expiresAt", q => q.lte("expiresAt", now)).take(100);
+    const states = await ctx.db.query("metaOAuthStates")
+      .withIndex("by_expiresAt", q => q.lte("expiresAt", now)).take(100);
+    for (const row of [...candidates, ...states]) await ctx.db.delete(row._id);
+    return { candidates: candidates.length, states: states.length };
+  },
+});
+
 export const listCandidates = query({
   args: { clientId: v.id("clients") },
   handler: async (ctx, { clientId }) => {
