@@ -53,6 +53,25 @@ Não ativar sem terminar a implantação e os testes reais:
 
 Jamais inserir `META_APP_SECRET`, `META_TOKEN_KEY_B64` ou tokens de Páginas em variáveis `VITE_*`, issues, pull requests, e-mails ou chats.
 
+## Configuração preparada para ESTE deployment
+
+Os endereços abaixo já constam da instalação documentada em `docs/implantacao-mvp.md`. São **endereços públicos, não segredos**. Confirme que o deployment ainda é o de produção antes de concluir o formulário na Meta.
+
+| Campo | Valor |
+| --- | --- |
+| Aplicativo a criar no Meta for Developers | **Social Media OS** |
+| Origem do site / `META_FRONTEND_ORIGIN` | `https://social-media-os-b0c.pages.dev` |
+| Callback de Facebook Login / `META_REDIRECT_URI` | `https://charming-leopard-770.convex.site/meta/oauth/callback` |
+| Backend Convex (funções) | `https://charming-leopard-770.convex.cloud` |
+| Endpoint MCP para o Claude | `https://charming-leopard-770.convex.site/mcp` |
+| Permissões Meta a solicitar | `pages_show_list`, `pages_read_engagement`, `pages_manage_posts`, `instagram_basic`, `instagram_content_publish` |
+
+**Como criar o aplicativo:** no Meta for Developers, crie um app com caso de uso de integração empresarial / Facebook Login e acesso a Páginas e Instagram profissional. Associe o app à organização Meta correta quando solicitado. Insira o callback exato em **Facebook Login → Configurações → URIs de redirecionamento OAuth válidas**. Configure o nome de exibição e contato com dados reais do responsável. A interface de criação e a nomenclatura dos casos de uso podem mudar; selecione as opções efetivamente oferecidas que permitam solicitar as cinco permissões acima.
+
+**Fases de habilitação:** (1) configuração do app e credenciais no Convex; (2) login de teste e escolha de Página própria com `VITE_META_ENABLED=true`, mantendo publicação desativada; (3) testes reais controlados com `META_PUBLISHING_ENABLED=true`; (4) teste do conector Claude com `META_MCP_ENABLED=true`; (5) somente após aprovação Meta para outras empresas, liberação comercial.
+
+**Atenção sobre Claude Free:** um conector MCP personalizado disponível no plano gratuito. A tela atual do Claude oferece autenticação por *cabeçalhos de solicitação*, incluindo `Authorization: Bearer …`. A chave criada no Social Media OS deve ser inserida apenas no campo seguro de conexão, jamais em mensagens. O conector é independente dos plugins Canva e GitHub do diretório.
+
 ## Etapas manuais para conectar empresas
 
 1. Acesse https://developers.facebook.com/apps/ e crie um aplicativo do tipo adequado a Facebook Login e publicação.
