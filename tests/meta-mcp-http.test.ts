@@ -20,7 +20,7 @@ async function fixture() {
   const ids = await t.run(async (ctx) => {
     const alice = await ctx.db.insert("users", { email: "mcp-a@example.test" });
     const bob = await ctx.db.insert("users", { email: "mcp-b@example.test" });
-    await ctx.db.insert("metaMcpKeys", { ownerId: alice, digest, createdAt: Date.now() });
+    await ctx.db.insert("metaMcpKeys", { ownerId: alice, digest, provider: "claude", createdAt: Date.now() });
     const mk = async (ownerId: typeof alice, name: string) =>
       ctx.db.insert("clients", {
         ownerId, name, contactName: "", email: "", phone: "",
