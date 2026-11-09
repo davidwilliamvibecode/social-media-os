@@ -198,11 +198,14 @@ export const listOperations = query({
       const client = await ctx.db.get(clientId);
       if (!client || client.ownerId !== ownerId) return [];
     }
-    const rows = await ctx.db.query("metaAiOperations")
-      .withIndex("by_owner", q => q.eq("ownerId", ownerId))
-      .order("desc").take(100);
-    return rows.filter(row => !clientId || row.clientId === clientId)
-      .map(row => ({
+    const rows = clientId
+      ? await ctx.db.query("metaAiOperations")
+          .withIndex("by_owner_client", q => q.eq("ownerId", ownerId).eq("clientId", clientId))
+          .order("desc").take(100)
+      : await ctx.db.query("metaAiOperations")
+          .withIndex("by_owner", q => q.eq("ownerId", ownerId))
+          .order("desc").take(100);
+    return rows.map(row => ({
         id: row._id, clientId: row.clientId, provider: row.provider,
         operation: row.operation, resultId: row.resultId, createdAt: row.createdAt,
       }));
