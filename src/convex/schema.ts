@@ -242,6 +242,7 @@ const schema = defineSchema(
       createdAt: v.number(),
     })
       .index("by_owner", ["ownerId"])
+      .index("by_owner_client", ["ownerId", "clientId"])
       .index("by_owner_command", ["ownerId", "operation", "commandId"])
       .index("by_owner_client_fingerprint", ["ownerId", "clientId", "operation", "fingerprint"]),
 
