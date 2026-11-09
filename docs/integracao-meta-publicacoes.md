@@ -82,11 +82,11 @@ Os endereços abaixo já constam da instalação documentada em `docs/implantaca
 6. Configure segredos somente no Convex e habilite `VITE_META_ENABLED=true` no build Cloudflare Pages para visualizar a tela de conexão.
 7. Mantenha `META_PUBLISHING_ENABLED` desativado até concluir teste de OAuth, separação entre empresas, aprovação, cancelamento, agendamento e publicação de teste.
 
-## Claude gratuito — conector próprio
+## Claude e ChatGPT — conectores independentes para a mesma central
 
-O Claude Free oferece **um conector MCP remoto personalizado**, conforme https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp.
+O Claude Free oferece **um conector MCP remoto personalizado**, conforme https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp. O ChatGPT pode utilizar o **mesmo endpoint MCP** quando a conta/workspace oferecer conexão personalizada com autenticação e ferramentas de escrita. A disponibilidade desse recurso deve ser validada na própria conta; o código preparado não comprova acesso ao conector na interface ChatGPT.
 
-1. No Social Media OS, abra `Publicações Meta` e gere uma chave de integração. Ela é exibida uma vez; emitir nova revoga a antiga.
+1. No Social Media OS, abra `Publicações Meta`, selecione **Claude** e gere sua chave. Depois selecione **ChatGPT** e gere outra chave. Cada uma é exibida uma vez. Trocar uma chave não revoga a da outra. As chaves antigas sem identificação de IA não autenticam mais: será necessário substituí-las.
 2. Depois de ativar `META_MCP_ENABLED=true` e publicar o backend, abra **Claude → Personalizar → Conectores → Adicionar conector personalizado**.
 3. Informe `https://SEU-DEPLOYMENT.convex.site/mcp`.
 4. Selecione autenticação compatível com cabeçalho personalizado e configure `Authorization` com valor `Bearer SUA-CHAVE`. Não coloque a chave no URL.
@@ -100,7 +100,17 @@ Ferramentas oferecidas:
 - `list_posts`: consulta agendamentos e resultados.
 - `schedule_approved`: agenda conteúdo já aprovado, para conta correta, e exige `confirm=true`.
 
-**O Claude não recebe os tokens Meta**. A chave MCP dá acesso somente ao gestor correspondente e pode ser revogada no Social Media OS. Não informar a chave em conversas com o Claude: fornecê-la apenas no campo seguro de configuração do conector.
+**Nenhuma das IAs recebe os tokens da Meta.** Cada chave MCP acessa exclusivamente os clientes do gestor autenticado; sua revogação é independente. Configure as chaves apenas nos campos seguros dos respectivos conectores, nunca em conversas, URLs, arquivos versionados ou logs.
+
+### Comandos das duas IAs e proteção contra duplicação
+
+- `create_draft` e `schedule_approved` exigem `commandId`: identificador único e estável de 8 a 120 caracteres alfanuméricos, underscore, hífen, ponto ou dois-pontos.
+- Se uma tentativa falhar ou precisar ser repetida, **reutilize o mesmo `commandId`**. Alterar os dados mantendo o identificador será recusado.
+- As IAs usam o mesmo banco Convex. Para um mesmo gestor e conteúdo, `schedule_approved` não cria outro agendamento se já existir um em curso; o reenvio idêntico retorna o registro existente.
+- Rascunhos com conteúdo exatamente equivalente enviados por Claude e ChatGPT num intervalo de 10 minutos utilizam o mesmo documento de conteúdo, evitando duplicação acidental.
+- Os registros de escrita bem-sucedida são salvos em `metaAiOperations` com **gestor, empresa, IA, comando, identificador do resultado e data**. O histórico fica disponível na seção `Publicações Meta`. Consultas de leitura e tentativas recusadas não são registradas nesse histórico.
+- Não são aprovadas publicações pelo conector: o agendamento só ocorre para conteúdos anteriormente marcados como **Aprovado** no sistema e mediante `confirm=true` fornecido após autorização explícita.
+- O backend Graph API permanece desativado por padrão (`META_PUBLISHING_ENABLED=false`). Não habilitar por conta de qualquer IA sem configuração e testes reais.
 
 ## Verificações mínimas para lançar com vários clientes
 
@@ -113,7 +123,9 @@ Ferramentas oferecidas:
 - [ ] Duas empresas do mesmo gestor: impossível escolher Página errada.
 - [ ] Cancelamento antes do horário impede publicação.
 - [ ] Falha de rede após envio não causa postagem duplicada.
-- [ ] Chave MCP criada, testada e revogada com sucesso no Claude.
+- [ ] Chaves MCP independentes criadas, testadas e revogadas para Claude e ChatGPT (se o plano habilitar conector ChatGPT).
+- [ ] Duas IAs executam comandos com `commandId` repetido e não criam rascunhos/agendamentos duplicados.
+- [ ] Histórico de operações identifica IA e empresa corretas sem vazar credenciais.
 - [ ] Revisão das permissões Meta aprovada para contas de empresas externas.
 - [ ] Operação com limites/custos do Convex observados e suporte definido.
 
