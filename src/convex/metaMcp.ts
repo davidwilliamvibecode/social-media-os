@@ -11,6 +11,8 @@ import { httpAction, action, query, mutation, internalQuery, internalMutation } 
 import { internal } from "./_generated/api";
 import { activeUser } from "./activeUser";
 import { assertWorkspaceCapacity } from "./workspaceData";
+import type { Id } from "./_generated/dataModel";
+import type { MutationCtx } from "./_generated/server";
 
 type AiProvider = "claude" | "chatgpt";
 const providerValidator = v.union(v.literal("claude"), v.literal("chatgpt"));
@@ -150,12 +152,71 @@ export const scheduledSummary = internalQuery({
   },
 });
 
+// O identificador idempotente é definido pela requisição da IA (não pela
+// chamada JSON-RPC). Ele é compartilhado entre as duas IAs do mesmo gestor.
+async function existingCommand(
+  ctx: MutationCtx,
+  args: {
+    ownerId: Id<"users">; clientId: Id<"clients">;
+    operation: "create_draft" | "schedule_approved";
+    commandId: string; fingerprint: string;
+  },
+): Promise<string | null> {
+  if (!/^[A-Za-z0-9_.:-]{8,120}$/.test(args.commandId))
+    throw new Error("Identificador do comando inválido.");
+  if (!/^[A-Za-z0-9_-]{43}$/.test(args.fingerprint))
+    throw new Error("Assinatura de comando inválida.");
+  const previous = await ctx.db.query("metaAiOperations")
+    .withIndex("by_owner_command", q => q
+      .eq("ownerId", args.ownerId)
+      .eq("operation", args.operation)
+      .eq("commandId", args.commandId))
+    .unique();
+  if (previous) {
+    if (previous.fingerprint !== args.fingerprint || previous.clientId !== args.clientId)
+      throw new Error("Este comando já foi utilizado com outros dados.");
+    return previous.resultId;
+  }
+  return null;
+}
+async function recordCommand(
+  ctx: MutationCtx,
+  args: {
+    ownerId: Id<"users">; clientId: Id<"clients">; provider: AiProvider;
+    operation: "create_draft" | "schedule_approved";
+    commandId: string; fingerprint: string; resultId: string;
+  },
+) {
+  await ctx.db.insert("metaAiOperations", { ...args, createdAt: Date.now() });
+}
+
+export const listOperations = query({
+  args: { clientId: v.optional(v.id("clients")) },
+  handler: async (ctx, { clientId }) => {
+    const ownerId = await activeUser(ctx);
+    if (!ownerId) return [];
+    if (clientId) {
+      const client = await ctx.db.get(clientId);
+      if (!client || client.ownerId !== ownerId) return [];
+    }
+    const rows = await ctx.db.query("metaAiOperations")
+      .withIndex("by_owner", q => q.eq("ownerId", ownerId))
+      .order("desc").take(100);
+    return rows.filter(row => !clientId || row.clientId === clientId)
+      .map(row => ({
+        id: row._id, clientId: row.clientId, provider: row.provider,
+        operation: row.operation, resultId: row.resultId, createdAt: row.createdAt,
+      }));
+  },
+});
+
 export const createDraft = internalMutation({
   args: {
     ownerId: v.id("users"), clientId: v.id("clients"),
     platform: v.union(v.literal("Instagram"), v.literal("Facebook")),
     format: v.union(v.literal("Single post"), v.literal("Reel")),
     topic: v.string(), caption: v.string(), assetNote: v.string(),
+    provider: providerValidator, commandId: v.string(), fingerprint: v.string(),
   },
   handler: async (ctx, args) => {
     const client = await ctx.db.get(args.clientId);
@@ -163,6 +224,28 @@ export const createDraft = internalMutation({
     if (!args.topic.trim() || args.topic.length > 250 ||
         !args.caption.trim() || args.caption.length > 2200 ||
         args.assetNote.length > 1500) throw new Error("Conteúdo inválido.");
+    const command = {
+      ownerId: args.ownerId, clientId: args.clientId,
+      operation: "create_draft" as const,
+      commandId: args.commandId, fingerprint: args.fingerprint,
+    };
+    const old = await existingCommand(ctx, command);
+    if (old) return { contentId: old as Id<"content">, status: "Drafting", repeated: true };
+
+    // Mesmo conteúdo enviado pelas duas IAs quase ao mesmo tempo:
+    // responde com o primeiro rascunho, sem criar duplicata.
+    const near = await ctx.db.query("metaAiOperations")
+      .withIndex("by_owner_client_fingerprint", q => q
+        .eq("ownerId", args.ownerId).eq("clientId", args.clientId)
+        .eq("operation", "create_draft").eq("fingerprint", args.fingerprint))
+      .order("desc").first();
+    if (near && near.createdAt >= Date.now() - 10 * 60_000) {
+      const existingId = ctx.db.normalizeId("content", near.resultId);
+      if (existingId && await ctx.db.get(existingId)) {
+        await recordCommand(ctx, { ...command, provider: args.provider, resultId: existingId });
+        return { contentId: existingId, status: "Drafting", repeated: true };
+      }
+    }
     const id = await ctx.db.insert("content", {
       ownerId: args.ownerId, clientId: args.clientId,
       date: new Date().toISOString().slice(0, 10),
@@ -172,7 +255,8 @@ export const createDraft = internalMutation({
       pillar: "Promotion", owner: "",
     });
     await assertWorkspaceCapacity(ctx, args.ownerId);
-    return { contentId: id, status: "Drafting" };
+    await recordCommand(ctx, { ...command, provider: args.provider, resultId: id });
+    return { contentId: id, status: "Drafting", repeated: false };
   },
 });
 
@@ -182,6 +266,7 @@ export const scheduleFromMcp = internalMutation({
     ownerId: v.id("users"), contentId: v.id("content"),
     accountId: v.id("metaAccounts"), scheduledAt: v.number(),
     mediaUrl: v.optional(v.string()),
+    provider: providerValidator, commandId: v.string(), fingerprint: v.string(),
   },
   handler: async (ctx, args) => {
     if (process.env.META_PUBLISHING_ENABLED !== "true")
@@ -191,6 +276,13 @@ export const scheduleFromMcp = internalMutation({
     if (!content || !account || content.ownerId !== args.ownerId ||
         account.ownerId !== args.ownerId || content.clientId !== account.clientId ||
         account.status !== "active") throw new Error("Conteúdo ou conta não pertence a esta empresa.");
+    const command = {
+      ownerId: args.ownerId, clientId: content.clientId,
+      operation: "schedule_approved" as const,
+      commandId: args.commandId, fingerprint: args.fingerprint,
+    };
+    const old = await existingCommand(ctx, command);
+    if (old) return { postId: old as Id<"metaPosts">, status: "scheduled", repeated: true };
     if (content.status !== "Approved") throw new Error("Conteúdo ainda não aprovado.");
     if (content.platform !== "Facebook" && content.platform !== "Instagram")
       throw new Error("Rede não suportada.");
@@ -231,7 +323,8 @@ export const scheduleFromMcp = internalMutation({
     const scheduledJobId = await ctx.scheduler.runAt(args.scheduledAt, internal.meta.deliverPost, { postId });
     await ctx.db.patch(postId, { scheduledJobId });
     await ctx.db.patch(content._id, { status: "Scheduled" });
-    return { postId, status: "scheduled" };
+    await recordCommand(ctx, { ...command, provider: args.provider, resultId: postId });
+    return { postId, status: "scheduled", repeated: false };
   },
 });
 
