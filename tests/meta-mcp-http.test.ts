@@ -121,6 +121,8 @@ describe("Endpoint HTTP /mcp do Social Media OS", () => {
       if (prevPublish === undefined) delete process.env.META_PUBLISHING_ENABLED;
       else process.env.META_PUBLISHING_ENABLED = prevPublish;
     }
+  });
+
   test("Claude e ChatGPT compartilham dados via HTTP MCP sem duplicar rascunhos", async () => {
     const { t, token, chatgptToken, ids } = await fixture();
     const prev = process.env.META_MCP_ENABLED;
@@ -170,6 +172,5 @@ describe("Endpoint HTTP /mcp do Social Media OS", () => {
       if (prev === undefined) delete process.env.META_MCP_ENABLED;
       else process.env.META_MCP_ENABLED = prev;
     }
-  });
   });
 });
