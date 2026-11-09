@@ -95,6 +95,7 @@ async function getOwned(
 /** Rejeita gravações que apontem para um cliente de outra pessoa. */
 const META_CLIENT_TABLES = [
   "metaOAuthStates", "metaCandidates", "metaAccounts", "metaPosts",
+  "metaAiOperations",
 ] as const;
 
 /** Exclui também credenciais e agendamentos vinculados ao cliente apagado. */
