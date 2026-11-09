@@ -289,7 +289,8 @@ const schema = defineSchema(
     })
       .index("by_owner", ["ownerId"])
       .index("by_owner_client", ["ownerId", "clientId"])
-      .index("by_content", ["contentId"]),
+      .index("by_content", ["contentId"])
+      .index("by_account", ["accountId"]),
 
     workspaces: defineTable({
       ownerId: v.id("users"),
