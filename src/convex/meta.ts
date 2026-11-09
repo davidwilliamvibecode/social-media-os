@@ -7,7 +7,7 @@ import {
   action, httpAction, internalAction, internalMutation, internalQuery, mutation, query,
 } from "./_generated/server";
 import { activeUser } from "./activeUser";
-import { publishMeta, type MetaPublishRequest } from "../data/metaGraph";
+import { MetaGraphError, publishMeta, type MetaPublishRequest } from "../data/metaGraph";
 
 function setting(name: string): string {
   const value = process.env[name];
@@ -413,20 +413,23 @@ export const claimPost = internalMutation({
 export const completePost = internalMutation({
   args: {
     postId: v.id("metaPosts"), publishedId: v.optional(v.string()),
-    success: v.boolean(), lastError: v.optional(v.string()),
+    outcome: v.union(v.literal("published"), v.literal("failed"), v.literal("uncertain")),
+    lastError: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const post = await ctx.db.get(args.postId);
     if (!post || post.status !== "publishing") return;
     await ctx.db.patch(post._id, {
-      status: args.success ? "published" : "uncertain",
+      status: args.outcome,
       updatedAt: Date.now(), publishedId: args.publishedId,
       lastError: args.lastError,
     });
-    if (args.success) {
+    if (args.outcome !== "uncertain") {
       const content = await ctx.db.get(post.contentId);
       if (content && content.ownerId === post.ownerId && content.status === "Scheduled")
-        await ctx.db.patch(content._id, { status: "Published" });
+        await ctx.db.patch(content._id, {
+          status: args.outcome === "published" ? "Published" : "Approved",
+        });
     }
   },
 });
@@ -453,13 +456,21 @@ export const deliverPost = internalAction({
       }
       const result = await publishMeta(request, { version: version() });
       await ctx.runMutation(internal.meta.completePost, {
-        postId, success: true, publishedId: result.id,
+        postId, outcome: "published", publishedId: result.id,
       });
-    } catch {
-      // Pode ter ocorrido publicação apesar da falha de rede. NUNCA repetir
-      // automaticamente sem verificar na conta Meta para evitar duplicação.
+    } catch (error) {
+      // Recusa HTTP 4xx confirmada pela Graph API: não houve autorização para
+      // publicar; liberar o conteúdo para correção, sem tentar novamente.
+      // Falha de rede, 5xx ou resposta ambígua: a mídia PODE ter sido publicada.
+      // Manter o estado incerto e exigir conciliação manual (sem duplicar posts).
+      const rejected = error instanceof MetaGraphError &&
+        error.status >= 400 && error.status < 500;
       await ctx.runMutation(internal.meta.completePost, {
-        postId, success: false, lastError: "Resultado incerto: conferir na Meta antes de tentar novamente.",
+        postId,
+        outcome: rejected ? "failed" : "uncertain",
+        lastError: rejected
+          ? "A Meta recusou a publicação. Verifique conta, permissões e mídia."
+          : "Resultado incerto: conferir na Meta antes de tentar novamente.",
       });
     }
   },
