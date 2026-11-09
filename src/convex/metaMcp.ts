@@ -12,6 +12,10 @@ import { internal } from "./_generated/api";
 import { activeUser } from "./activeUser";
 import { assertWorkspaceCapacity } from "./workspaceData";
 
+type AiProvider = "claude" | "chatgpt";
+const providerValidator = v.union(v.literal("claude"), v.literal("chatgpt"));
+const commandValidator = v.union(v.literal("create_draft"), v.literal("schedule_approved"));
+
 function b64(bytes: Uint8Array): string {
   let raw = "";
   for (const byte of bytes) raw += String.fromCharCode(byte);
@@ -26,28 +30,29 @@ export const identifyUser = internalQuery({
   handler: async (ctx) => await activeUser(ctx),
 });
 export const persistKey = internalMutation({
-  args: { ownerId: v.id("users"), digest: v.string() },
+  args: { ownerId: v.id("users"), digest: v.string(), provider: providerValidator },
   handler: async (ctx, args) => {
     const previous = await ctx.db.query("metaMcpKeys")
       .withIndex("by_owner", q => q.eq("ownerId", args.ownerId)).collect();
     for (const key of previous) {
-      if (!key.revokedAt) await ctx.db.patch(key._id, { revokedAt: Date.now() });
+      // Uma chave ativa para cada IA. Chaves legadas sem identificação
+      // são revogadas automaticamente na primeira emissão.
+      if (!key.revokedAt && (!key.provider || key.provider === args.provider))
+        await ctx.db.patch(key._id, { revokedAt: Date.now() });
     }
-    return ctx.db.insert("metaMcpKeys", {
-      ...args, createdAt: Date.now(),
-    });
+    return ctx.db.insert("metaMcpKeys", { ...args, createdAt: Date.now() });
   },
 });
 
-/** Uma chave por gestor. Exibida somente uma vez; reemitir revoga a anterior. */
+/** Uma chave por IA e gestor. Apenas a chave daquela IA é rotacionada. */
 export const issueKey = action({
-  args: {},
-  handler: async (ctx): Promise<string> => {
+  args: { provider: providerValidator },
+  handler: async (ctx, { provider }): Promise<string> => {
     const ownerId = await ctx.runQuery(internal.metaMcp.identifyUser, {});
     if (!ownerId) throw new Error("Entre com sua conta do Social Media OS.");
     const key = "smos_" + b64(crypto.getRandomValues(new Uint8Array(32)));
     await ctx.runMutation(internal.metaMcp.persistKey, {
-      ownerId, digest: await digest(key),
+      ownerId, digest: await digest(key), provider,
     });
     return key;
   },
@@ -60,7 +65,8 @@ export const listKeys = query({
     const keys = await ctx.db.query("metaMcpKeys")
       .withIndex("by_owner", q => q.eq("ownerId", ownerId)).collect();
     return keys.map(row => ({
-      id: row._id, createdAt: row.createdAt, revokedAt: row.revokedAt,
+      id: row._id, provider: row.provider ?? "legado",
+      createdAt: row.createdAt, revokedAt: row.revokedAt,
     }));
   },
 });
@@ -79,8 +85,8 @@ export const validateKey = internalQuery({
   handler: async (ctx, args) => {
     const key = await ctx.db.query("metaMcpKeys")
       .withIndex("by_digest", q => q.eq("digest", args.digest)).unique();
-    if (!key || key.revokedAt) return null;
-    return key.ownerId;
+    if (!key || key.revokedAt || !key.provider) return null;
+    return { ownerId: key.ownerId, provider: key.provider, keyId: key._id };
   },
 });
 
