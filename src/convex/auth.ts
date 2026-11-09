@@ -9,6 +9,8 @@ import { ConvexError, type Value } from "convex/values";
 import {
   LEGAL_VERSION,
   codeDigest,
+  invitationDigest,
+  isInvitationCode,
   normalizedEmail,
   validatePassword,
 } from "../data/access";
@@ -29,7 +31,7 @@ const invitedPassword = Password({
     }
     const inviteCode =
       typeof params.inviteCode === "string" ? params.inviteCode.trim() : "";
-    if (!/^[a-f0-9]{64}$/.test(inviteCode))
+    if (!isInvitationCode(inviteCode))
       throw new ConvexError("Convite inválido ou expirado.");
     return { email, signupInvitation: inviteCode, legalVersion: LEGAL_VERSION };
   },
@@ -65,7 +67,9 @@ export const { auth, signIn, signOut, store, isAuthenticated } = convexAuth({
       if (provider.id !== "password")
         throw new ConvexError("Cadastro indisponível.");
       const email = normalizedEmail(profile.email);
-      const digest = await codeDigest(String(profile.signupInvitation ?? ""));
+      const digest = await invitationDigest(
+        String(profile.signupInvitation ?? ""),
+      );
       const invite = await db
         .query("signupInvitations")
         .withIndex("by_email", (q) => q.eq("email", email))

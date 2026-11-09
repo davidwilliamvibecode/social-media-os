@@ -9,7 +9,7 @@ import {
   test,
 } from "bun:test";
 import { convexTest } from "convex-test";
-import { LEGAL_VERSION, codeDigest } from "../src/data/access";
+import { LEGAL_VERSION, invitationDigest } from "../src/data/access";
 import { api, internal } from "../src/convex/_generated/api";
 import schema from "../src/convex/schema";
 
@@ -81,7 +81,7 @@ describe("password access — single deployment MVP", () => {
     await t.run(async (ctx) =>
       ctx.db.insert("signupInvitations", {
         email,
-        digest: await codeDigest(inviteCode),
+        digest: await invitationDigest(inviteCode),
         expiresAt: Date.now() + 60_000,
       }),
     );
@@ -96,12 +96,12 @@ describe("password access — single deployment MVP", () => {
     await t.run(async (ctx) =>
       ctx.db.insert("signupInvitations", {
         email,
-        digest: await codeDigest(inviteCode),
+        digest: await invitationDigest(inviteCode),
         expiresAt: Date.now() + 60_000,
       }),
     );
     await expect(
-      signIn(t, "signUp", { inviteCode: "wrong-code" }),
+      signIn(t, "signUp", { inviteCode: "NoMatch_" }),
     ).rejects.toThrow();
     expect(
       await t.run(async (ctx) => ctx.db.query("users").collect()),
@@ -113,12 +113,12 @@ describe("password access — single deployment MVP", () => {
     await t.run(async (ctx) =>
       ctx.db.insert("signupInvitations", {
         email,
-        digest: await codeDigest(inviteCode),
+        digest: await invitationDigest(inviteCode),
         expiresAt: Date.now() + 60_000,
       }),
     );
     await expect(
-      signIn(t, "signUp", { inviteCode, password: "weak" }),
+      signIn(t, "signUp", { inviteCode, password: "Seven7!" }),
     ).rejects.toThrow();
     expect(
       await t.run(async (ctx) => ctx.db.query("users").collect()),
@@ -130,7 +130,7 @@ describe("password access — single deployment MVP", () => {
     await t.run(async (ctx) =>
       ctx.db.insert("signupInvitations", {
         email,
-        digest: await codeDigest(inviteCode),
+        digest: await invitationDigest(inviteCode),
         expiresAt: Date.now() + 60_000,
       }),
     );
@@ -152,7 +152,7 @@ describe("password access — single deployment MVP", () => {
     await t.run(async (ctx) =>
       ctx.db.insert("signupInvitations", {
         email,
-        digest: await codeDigest(inviteCode),
+        digest: await invitationDigest(inviteCode),
         expiresAt: Date.now() + 60_000,
       }),
     );
@@ -167,7 +167,7 @@ describe("password access — single deployment MVP", () => {
     await t.run(async (ctx) =>
       ctx.db.insert("signupInvitations", {
         email,
-        digest: await codeDigest(inviteCode),
+        digest: await invitationDigest(inviteCode),
         expiresAt: Date.now() + 60_000,
       }),
     );
@@ -218,7 +218,13 @@ describe("password access — single deployment MVP", () => {
     await expect(
       signIn(t, "signUp", { inviteCode: current.code, acceptTerms: "false" }),
     ).rejects.toThrow();
-    await signIn(t, "signUp", { inviteCode: current.code });
+    expect(current.code).toMatch(/^[A-Za-z0-9_-]{8}$/);
+    const shortPassword = "First8!a";
+    await signIn(t, "signUp", {
+      inviteCode: current.code,
+      password: shortPassword,
+    });
+    expect(await signIn(t, "signIn", { password: shortPassword })).toBeTruthy();
     const users = await t.run((ctx) => ctx.db.query("users").collect());
     expect(users[0].legalVersion).toBe(LEGAL_VERSION);
     expect(users[0].legalAcceptedAt).toBeGreaterThan(0);
@@ -255,7 +261,8 @@ describe("password access — single deployment MVP", () => {
     );
     expect(stored).toHaveLength(1);
     expect(stored[0].digest).not.toBe(code);
-    const newPassword = "New-Secure-Password-2026!";
+    expect(code).toMatch(/^[a-f0-9]{64}$/);
+    const newPassword = "Short8!a";
     await expect(
       t.action(api.auth.signIn, {
         provider: "recovery",

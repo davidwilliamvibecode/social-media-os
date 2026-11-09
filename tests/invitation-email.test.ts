@@ -8,7 +8,7 @@ import {
   test,
 } from "bun:test";
 import { convexTest } from "convex-test";
-import { codeDigest } from "../src/data/access";
+import { invitationDigest } from "../src/data/access";
 import { sendInvitationEmail } from "../src/data/invitation-email";
 import { internal } from "../src/convex/_generated/api";
 import schema from "../src/convex/schema";
@@ -64,7 +64,7 @@ describe("convites enviados pelo Resend", () => {
       ctx.db.query("signupInvitations").collect(),
     );
     expect(rows).toHaveLength(1);
-    expect(rows[0].digest).toBe(await codeDigest(earlier.code));
+    expect(rows[0].digest).toBe(await invitationDigest(earlier.code));
     expect(fetch).not.toHaveBeenCalled();
   });
 
@@ -95,9 +95,9 @@ describe("convites enviados pelo Resend", () => {
     });
     const [url, options] = fetch.mock.calls[0];
     const body = requestBody(options);
-    const code = body.text.match(/código de convite: ([a-f0-9]{64})/)?.[1];
+    const code = body.text.match(/código de convite: ([A-Za-z0-9_-]{8})/)?.[1];
     expect(code).toBeDefined();
-    const digest = await codeDigest(code!);
+    const digest = await invitationDigest(code!);
     expect(url).toBe("https://api.resend.com/emails");
     expect(body.to).toEqual(["gestor@example.com"]);
     expect(body.from).toBe("Social Media OS <convites@example.com>");
@@ -123,7 +123,7 @@ describe("convites enviados pelo Resend", () => {
       Date.now() + 48 * 60 * 60 * 1000,
     );
     expect(rows.find((row) => row.email === "outro@example.com")!.digest).toBe(
-      await codeDigest(other.code),
+      await invitationDigest(other.code),
     );
     expect(result).toEqual({
       status: "accepted",
@@ -218,7 +218,7 @@ describe("convites enviados pelo Resend", () => {
   test("escapa o destinatário no HTML do e-mail", async () => {
     const fetch = spyOn(globalThis, "fetch").mockResolvedValue(accepted());
     await sendInvitationEmail(config, "<teste>@example.com", {
-      code: "a".repeat(64),
+      code: "Ab3_cd-E",
       expiresAt: Date.now() + 48 * 60 * 60 * 1000,
     });
     const body = requestBody(fetch.mock.calls[0][1]);

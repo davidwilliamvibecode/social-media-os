@@ -1,5 +1,10 @@
 import { useAuth } from "@/hooks/use-auth";
-import { LEGAL_VERSION } from "@/data/access";
+import {
+  INVITATION_CODE_LENGTH,
+  LEGAL_VERSION,
+  MIN_PASSWORD_LENGTH,
+  isInvitationCode,
+} from "@/data/access";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -62,13 +67,21 @@ export default function Auth({
       .trim()
       .toLowerCase();
     const password = String(formData.get("password") ?? "");
-    if (mode !== "signIn" && password.length < 12) {
-      setError("Crie uma senha com pelo menos 12 caracteres.");
+    if (mode !== "signIn" && password.length < MIN_PASSWORD_LENGTH) {
+      setError(
+        `Crie uma senha com pelo menos ${MIN_PASSWORD_LENGTH} caracteres.`,
+      );
       return;
     }
     formData.set("email", email);
     formData.set("flow", mode);
     if (mode === "signUp") {
+      const inviteCode = String(formData.get("inviteCode") ?? "").trim();
+      if (!isInvitationCode(inviteCode)) {
+        setError("Confira o código de convite que você recebeu.");
+        return;
+      }
+      formData.set("inviteCode", inviteCode);
       formData.set("legalVersion", LEGAL_VERSION);
       formData.set(
         "acceptTerms",
@@ -137,7 +150,7 @@ export default function Auth({
                   type="password"
                   name="password"
                   required
-                  minLength={mode !== "signIn" ? 12 : 1}
+                  minLength={mode !== "signIn" ? MIN_PASSWORD_LENGTH : 1}
                   maxLength={128}
                   autoComplete={
                     mode === "signIn" ? "current-password" : "new-password"
@@ -149,8 +162,8 @@ export default function Auth({
               </div>
               {mode === "signUp" && (
                 <p className="text-xs text-muted-foreground">
-                  Use pelo menos 12 caracteres. Depois de entrar, gere sua chave
-                  de emergência em Configurações.
+                  Use pelo menos {MIN_PASSWORD_LENGTH} caracteres. Depois de
+                  entrar, gere sua chave de emergência em Configurações.
                 </p>
               )}
             </label>
@@ -161,7 +174,7 @@ export default function Auth({
                   type="password"
                   name="inviteCode"
                   required
-                  minLength={64}
+                  minLength={INVITATION_CODE_LENGTH}
                   maxLength={64}
                   autoComplete="off"
                   placeholder="Código fornecido pelo administrador"
@@ -169,8 +182,9 @@ export default function Auth({
                 />
                 <p className="text-xs text-muted-foreground">
                   O administrador fornece o convite por contato privado. Use o
-                  mesmo e-mail informado na contratação. O código vale por 48
-                  horas e é necessário somente no cadastro.
+                  mesmo e-mail informado na contratação. Novos códigos têm{" "}
+                  {INVITATION_CODE_LENGTH} caracteres, valem por 48 horas e são
+                  usados somente no cadastro.
                 </p>
               </label>
             )}

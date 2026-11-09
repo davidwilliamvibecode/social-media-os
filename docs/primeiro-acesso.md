@@ -13,8 +13,8 @@ O procedimento atual é **assistido**, seguindo a solução sem domínio documen
 1. No dashboard Convex do projeto correto, abra a função **interna** `access:createInvite`.
 2. Confirme a identidade e o vínculo com o e-mail pelo contato combinado na contratação. Informe somente o e-mail do gestor contratado, em `{"email":"gestor@exemplo.com"}`.
 3. Execute a função e entregue o código retornado, junto do endereço de cadastro, diretamente ao destinatário por esse canal privado. Não registre o código em issues, logs, prints, documentos públicos ou grupos. Não peça a senha do cliente.
-4. O gestor escolhe “Recebi um convite — criar conta”, informa o mesmo e-mail, sua própria senha de 12 a 128 caracteres, convite e aceite dos documentos.
-5. O convite é vinculado ao e-mail e consumido na mesma transação da criação da conta. Um novo convite para o mesmo e-mail invalida o anterior.
+4. O gestor escolhe “Recebi um convite — criar conta”, informa o mesmo e-mail, sua própria senha de 8 a 128 caracteres, convite e aceite dos documentos.
+5. O novo convite tem 8 caracteres, vale 48 horas, é vinculado ao e-mail e é consumido na mesma transação da criação da conta. Um novo convite para o mesmo e-mail invalida o anterior.
 
 O antigo `SOCIAL_MEDIA_OS_SIGNUP_CODE` compartilhado não libera novos cadastros. Contas existentes continuam usando suas senhas e conservam os mesmos IDs e registros. O convite individual não é uma verificação automática de propriedade do e-mail.
 

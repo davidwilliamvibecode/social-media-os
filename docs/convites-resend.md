@@ -20,7 +20,7 @@ O operador informa um e-mail no Convex e executa a ação interna `access:sendIn
 3. O retorno `status: "accepted"`, `emailId` e `expiresAt` indica que a API do Resend aceitou a mensagem. O código não aparece nesse retorno.
 4. Confirmar o evento de entrega no painel do Resend. A aceitação da API não garante chegada à caixa de entrada; a validação inicial inclui receber a mensagem e cadastrar uma conta com o código recebido.
 
-O destinatário abre `https://social-media-os-b0c.pages.dev/auth`, escolhe “Recebi um convite — criar conta”, usa o mesmo e-mail, copia o código, cria a própria senha e aceita os documentos. O convite vale 48 horas e só pode ser utilizado uma vez. O banco guarda apenas o digest do código. O link não inclui o código em sua URL.
+O destinatário abre `https://social-media-os-b0c.pages.dev/auth`, escolhe “Recebi um convite — criar conta”, usa o mesmo e-mail, copia o código, cria a própria senha e aceita os documentos. O novo convite tem 8 caracteres, vale 48 horas e só pode ser utilizado uma vez. O banco guarda apenas o digest do código. O link não inclui o código em sua URL.
 
 As tentativas automáticas por falha de rede, HTTP 429 ou 5xx usam o mesmo corpo e chave de idempotência do Resend, no máximo três vezes. Uma falha permanente interrompe a operação e não é apresentada como envio aceito. Erros do provedor não são repassados com o conteúdo original.
 

@@ -1,4 +1,10 @@
 export const LEGAL_VERSION = "2026-11-01-minuta";
+export const MIN_PASSWORD_LENGTH = 8;
+export const INVITATION_CODE_LENGTH = 8;
+
+const INVITATION_ALPHABET =
+  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+const LONG_CODE_PATTERN = /^[a-f0-9]{64}$/;
 
 export function normalizedEmail(value: unknown): string {
   const email =
@@ -15,10 +21,12 @@ export function validatePassword(
 ): asserts password is string {
   if (
     typeof password !== "string" ||
-    password.length < 12 ||
+    password.length < MIN_PASSWORD_LENGTH ||
     password.length > 128
   ) {
-    throw new Error("A senha precisa ter de 12 a 128 caracteres.");
+    throw new Error(
+      `A senha precisa ter de ${MIN_PASSWORD_LENGTH} a 128 caracteres.`,
+    );
   }
 }
 
@@ -28,9 +36,29 @@ export function randomAccessCode(): string {
     .join("");
 }
 
-export async function codeDigest(code: string): Promise<string> {
-  if (!/^[a-f0-9]{64}$/.test(code))
+export function randomInvitationCode(): string {
+  return [...crypto.getRandomValues(new Uint8Array(INVITATION_CODE_LENGTH))]
+    .map((byte) => INVITATION_ALPHABET[byte & 63])
+    .join("");
+}
+
+export function isInvitationCode(code: string): boolean {
+  // Older invites retain their original digest and expiration date.
+  return /^[A-Za-z0-9_-]{8}$/.test(code) || LONG_CODE_PATTERN.test(code);
+}
+
+export function invitationDigest(code: string): Promise<string> {
+  if (!isInvitationCode(code)) throw new Error("Convite inválido ou expirado.");
+  return hashCode(code);
+}
+
+export function codeDigest(code: string): Promise<string> {
+  if (!LONG_CODE_PATTERN.test(code))
     throw new Error("Código inválido ou expirado.");
+  return hashCode(code);
+}
+
+async function hashCode(code: string): Promise<string> {
   const hash = await crypto.subtle.digest(
     "SHA-256",
     new TextEncoder().encode(code),

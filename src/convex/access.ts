@@ -1,6 +1,12 @@
 import { retrieveAccount } from "@convex-dev/auth/server";
 import { ConvexError, v } from "convex/values";
-import { codeDigest, normalizedEmail, randomAccessCode } from "../data/access";
+import {
+  codeDigest,
+  invitationDigest,
+  normalizedEmail,
+  randomAccessCode,
+  randomInvitationCode,
+} from "../data/access";
 import {
   invitationEmailConfig,
   sendInvitationEmail,
@@ -24,11 +30,11 @@ export const createInvite = internalMutation({
       .withIndex("by_email", (q) => q.eq("email", email))
       .collect();
     for (const row of old) await ctx.db.delete(row._id);
-    const code = randomAccessCode();
+    const code = randomInvitationCode();
     const expiresAt = Date.now() + 48 * 60 * 60 * 1_000;
     await ctx.db.insert("signupInvitations", {
       email,
-      digest: await codeDigest(code),
+      digest: await invitationDigest(code),
       expiresAt,
     });
     return { code, expiresAt };

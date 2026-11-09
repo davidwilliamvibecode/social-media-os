@@ -1,4 +1,4 @@
-import { codeDigest, normalizedEmail } from "./access";
+import { invitationDigest, normalizedEmail } from "./access";
 
 const AUTH_URL = "https://social-media-os-b0c.pages.dev/auth";
 const SEND_ERROR =
@@ -38,7 +38,7 @@ export async function sendInvitationEmail(
   email: string,
   invite: { code: string; expiresAt: number },
 ): Promise<string> {
-  const digest = await codeDigest(invite.code);
+  const digest = await invitationDigest(invite.code);
   const text = [
     "Seu acesso ao Social Media OS foi liberado.",
     `Abra ${AUTH_URL} e escolha “Recebi um convite — criar conta”.`,
