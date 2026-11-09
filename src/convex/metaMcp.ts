@@ -16,7 +16,6 @@ import type { MutationCtx } from "./_generated/server";
 
 type AiProvider = "claude" | "chatgpt";
 const providerValidator = v.union(v.literal("claude"), v.literal("chatgpt"));
-const commandValidator = v.union(v.literal("create_draft"), v.literal("schedule_approved"));
 
 function b64(bytes: Uint8Array): string {
   let raw = "";
@@ -344,8 +343,9 @@ const toolCatalog = [
         format: { type: "string", enum: ["Single post", "Reel"] },
         topic: { type: "string" }, caption: { type: "string" },
         assetNote: { type: "string", description: "Referência da mídia, nome do arquivo, ou observação." },
+        commandId: { type: "string", description: "Identificador estável e único do pedido. Reutilize o MESMO commandId em tentativas de repetição. Use pelo menos oito caracteres." },
       },
-      required: ["clientId", "platform", "format", "topic", "caption"],
+      required: ["clientId", "platform", "format", "topic", "caption", "commandId"],
       additionalProperties: false,
     },
   },
@@ -383,8 +383,9 @@ const toolCatalog = [
         scheduledAt: { type: "number" },
         mediaUrl: { type: "string" },
         confirm: { type: "boolean", const: true },
+        commandId: { type: "string", description: "Identificador único do comando. Reutilize em tentativas repetidas; não crie um novo identificador para reenvios." },
       },
-      required: ["contentId", "accountId", "scheduledAt", "confirm"],
+      required: ["contentId", "accountId", "scheduledAt", "confirm", "commandId"],
       additionalProperties: false,
     },
   },
@@ -410,7 +411,11 @@ function originAllowed(raw: string | null): boolean {
   if (!raw) return true;
   try {
     const host = new URL(raw);
-    return host.protocol === "https:" && (host.hostname === "claude.ai" || host.hostname.endsWith(".claude.ai"));
+    return host.protocol === "https:" && (
+      host.hostname === "claude.ai" || host.hostname.endsWith(".claude.ai") ||
+      host.hostname === "chatgpt.com" || host.hostname.endsWith(".chatgpt.com") ||
+      host.hostname === "chat.openai.com"
+    );
   } catch { return false; }
 }
 
@@ -424,8 +429,9 @@ export const handleMcp = httpAction(async (ctx, request) => {
   const auth = request.headers.get("Authorization") ?? "";
   if (!/^Bearer smos_[A-Za-z0-9_-]{40,}$/.test(auth))
     return new Response("Não autorizado", { status: 401, headers: { "WWW-Authenticate": "Bearer" } });
-  const ownerId = await ctx.runQuery(internal.metaMcp.validateKey, { digest: await digest(auth.slice(7)) });
-  if (!ownerId) return new Response("Não autorizado", { status: 401 });
+  const identity = await ctx.runQuery(internal.metaMcp.validateKey, { digest: await digest(auth.slice(7)) });
+  if (!identity) return new Response("Não autorizado", { status: 401 });
+  const { ownerId, provider } = identity;
 
   let call: { jsonrpc?: string; id?: unknown; method?: string; params?: unknown };
   try {
@@ -444,8 +450,8 @@ export const handleMcp = httpAction(async (ctx, request) => {
     return rpc(call.id ?? null, {
       protocolVersion: "2025-03-26",
       capabilities: { tools: { listChanged: false } },
-      serverInfo: { name: "social-media-os-meta", version: "0.1.0" },
-      instructions: "Use list_clients para identificar empresa, create_draft para rascunhos. Somente schedule_approved agenda publicações explicitamente aprovadas.",
+      serverInfo: { name: "social-media-os-meta", version: "0.2.0" },
+      instructions: "Compatível com Claude e ChatGPT por chaves separadas. Use list_clients, crie rascunhos com commandId único e só agende conteúdos aprovados após autorização expressa. Repita o mesmo commandId em reenvios, nunca invente aprovação.",
     });
   if (call.method === "tools/list")
     return rpc(call.id ?? null, { tools: toolCatalog });
@@ -462,17 +468,23 @@ export const handleMcp = httpAction(async (ctx, request) => {
         break;
       case "create_draft": {
         const clientId = stringArg(args.clientId, "clientId");
+        const commandId = stringArg(args.commandId, "commandId", 120);
         const platform = stringArg(args.platform, "platform");
         const format = stringArg(args.format, "format");
         if (platform !== "Instagram" && platform !== "Facebook")
           throw new Error("Plataforma inválida.");
         if (format !== "Single post" && format !== "Reel")
           throw new Error("Formato inválido.");
+        const topic = stringArg(args.topic, "topic", 250);
+        const caption = stringArg(args.caption, "caption", 2200);
+        const assetNote = typeof args.assetNote === "string" ? args.assetNote : "";
+        const fingerprint = await digest(JSON.stringify({
+          operation: "create_draft", clientId, platform, format, topic, caption, assetNote,
+        }));
         result = await ctx.runMutation(internal.metaMcp.createDraft, {
-          ownerId, clientId: clientId as import("./_generated/dataModel").Id<"clients">,
-          platform, format, topic: stringArg(args.topic, "topic", 250),
-          caption: stringArg(args.caption, "caption", 2200),
-          assetNote: typeof args.assetNote === "string" ? args.assetNote : "",
+          ownerId, provider, commandId, fingerprint,
+          clientId: clientId as import("./_generated/dataModel").Id<"clients">,
+          platform, format, topic, caption, assetNote,
         });
         break;
       }
@@ -495,12 +507,20 @@ export const handleMcp = httpAction(async (ctx, request) => {
         if (args.confirm !== true) throw new Error("Confirmação explícita obrigatória.");
         if (typeof args.scheduledAt !== "number")
           throw new Error("scheduledAt precisa ser número em milissegundos UTC.");
+        const contentId = stringArg(args.contentId, "contentId");
+        const accountId = stringArg(args.accountId, "accountId");
+        const commandId = stringArg(args.commandId, "commandId", 120);
+        const mediaUrl = typeof args.mediaUrl === "string" ? args.mediaUrl : "";
+        const fingerprint = await digest(JSON.stringify({
+          operation: "schedule_approved", contentId, accountId,
+          scheduledAt: args.scheduledAt, mediaUrl,
+        }));
         result = await ctx.runMutation(internal.metaMcp.scheduleFromMcp, {
-          ownerId,
-          contentId: stringArg(args.contentId, "contentId") as import("./_generated/dataModel").Id<"content">,
-          accountId: stringArg(args.accountId, "accountId") as import("./_generated/dataModel").Id<"metaAccounts">,
+          ownerId, provider, commandId, fingerprint,
+          contentId: contentId as import("./_generated/dataModel").Id<"content">,
+          accountId: accountId as import("./_generated/dataModel").Id<"metaAccounts">,
           scheduledAt: args.scheduledAt,
-          ...(typeof args.mediaUrl === "string" ? { mediaUrl: args.mediaUrl } : {}),
+          ...(mediaUrl ? { mediaUrl } : {}),
         });
         break;
       }
