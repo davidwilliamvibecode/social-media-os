@@ -180,6 +180,62 @@ describe("Meta multicliente — agendamento seguro", () => {
     expect(account?.encryptedToken).toBe("");
   });
 
+  test("desconexão cancela agendamento e impede reativação silenciosa", async () => {
+    await withPublishingEnabled(async () => {
+      const { alice, t, ids } = await setup();
+      const postId = await alice.mutation(api.meta.schedulePost, {
+        contentId: ids.content, accountId: ids.account,
+        scheduledAt: Date.now() + 3600000,
+      });
+      await alice.mutation(api.meta.disconnectAccount, { accountId: ids.account });
+      const data = await t.run(async (ctx) => ({
+        post: await ctx.db.get(postId),
+        content: await ctx.db.get(ids.content),
+      }));
+      expect(data.post?.status).toBe("cancelled");
+      expect(data.content?.status).toBe("Approved");
+    });
+  });
+
+  test("recusa confirmada libera conteúdo; incerteza impede postagem duplicada", async () => {
+    const { t, ids } = await setup();
+    const postId = await t.run(async (ctx) => {
+      await ctx.db.patch(ids.content, { status: "Scheduled" });
+      return ctx.db.insert("metaPosts", {
+        ownerId: ids.alice, clientId: ids.aliceClient,
+        contentId: ids.content, accountId: ids.account,
+        platform: "Facebook", format: "text",
+        targetPageId: "123456789", caption: "Teste",
+        scheduledAt: Date.now() - 1000,
+        createdAt: Date.now(), updatedAt: Date.now(),
+        status: "publishing",
+      });
+    });
+    await t.mutation(internal.meta.completePost, {
+      postId, outcome: "failed", lastError: "Recusado",
+    });
+    let current = await t.run(async (ctx) => ({
+      post: await ctx.db.get(postId),
+      content: await ctx.db.get(ids.content),
+    }));
+    expect(current.post?.status).toBe("failed");
+    expect(current.content?.status).toBe("Approved");
+
+    await t.run(async (ctx) => {
+      await ctx.db.patch(postId, { status: "publishing" });
+      await ctx.db.patch(ids.content, { status: "Scheduled" });
+    });
+    await t.mutation(internal.meta.completePost, {
+      postId, outcome: "uncertain", lastError: "Checar a Meta",
+    });
+    current = await t.run(async (ctx) => ({
+      post: await ctx.db.get(postId),
+      content: await ctx.db.get(ids.content),
+    }));
+    expect(current.post?.status).toBe("uncertain");
+    expect(current.content?.status).toBe("Scheduled");
+  });
+
   test("limpa estados OAuth e tokens temporários vencidos", async () => {
     const { t, ids } = await setup();
     const expired = await t.run(async (ctx) => {
