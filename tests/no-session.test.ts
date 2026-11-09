@@ -115,6 +115,7 @@ const SESSION_QUERIES: Record<string, unknown> = {
   "meta:listAccounts": [],
   "meta:listPosts": [],
   "metaMcp:listKeys": [],
+  "metaMcp:listOperations": [],
   "users:currentUser": null,
 };
 
