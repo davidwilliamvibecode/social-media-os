@@ -427,3 +427,9 @@ export const handleMcp = httpAction(async (ctx, request) => {
     });
   }
 });
+
+/** MCP Streamable HTTP stateless transport: no GET event stream is offered. */
+export const handleMcpGet = httpAction(async () => new Response(null, {
+  status: 405,
+  headers: { Allow: "POST", "Cache-Control": "no-store" },
+}));
