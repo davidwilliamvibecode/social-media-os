@@ -251,6 +251,7 @@ const schema = defineSchema(
       clientId: v.id("clients"),
       digest: v.string(),
       expiresAt: v.number(),
+      channel: v.optional(v.union(v.literal("facebook"), v.literal("facebookInstagram"), v.literal("instagram"))),
     })
       .index("by_digest", ["digest"])
       .index("by_owner_client", ["ownerId", "clientId"])
@@ -259,9 +260,10 @@ const schema = defineSchema(
     metaCandidates: defineTable({
       ownerId: v.id("users"),
       clientId: v.id("clients"),
-      pageId: v.string(),
+      pageId: v.optional(v.string()),
       pageName: v.string(),
       instagramId: v.optional(v.string()),
+      tokenExpiresAt: v.optional(v.number()),
       encryptedToken: v.string(),
       expiresAt: v.number(),
     })
@@ -271,15 +273,17 @@ const schema = defineSchema(
     metaAccounts: defineTable({
       ownerId: v.id("users"),
       clientId: v.id("clients"),
-      pageId: v.string(),
+      pageId: v.optional(v.string()),
       pageName: v.string(),
       instagramId: v.optional(v.string()),
+      tokenExpiresAt: v.optional(v.number()),
       encryptedToken: v.string(),
       connectedAt: v.number(),
       status: v.union(v.literal("active"), v.literal("revoked")),
     })
       .index("by_owner_client", ["ownerId", "clientId"])
-      .index("by_owner_page", ["ownerId", "pageId"]),
+      .index("by_owner_page", ["ownerId", "pageId"])
+      .index("by_owner_instagram", ["ownerId", "instagramId"]),
 
     metaPosts: defineTable({
       ownerId: v.id("users"),

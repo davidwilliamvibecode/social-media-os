@@ -131,7 +131,7 @@ export const accountSummary = internalQuery({
       .collect();
     return rows.map(row => ({
       accountId: row._id, pageName: row.pageName, instagramAvailable: Boolean(row.instagramId),
-      status: row.status,
+      facebookAvailable: Boolean(row.pageId), status: row.status, tokenExpiresAt: row.tokenExpiresAt,
     }));
   },
 });
@@ -288,6 +288,8 @@ export const scheduleFromMcp = internalMutation({
     if (content.status !== "Approved") throw new Error("Conteúdo ainda não aprovado.");
     if (content.platform !== "Facebook" && content.platform !== "Instagram")
       throw new Error("Rede não suportada.");
+    if (content.platform === "Facebook" && !account.pageId)
+      throw new Error("Página do Facebook não vinculada.");
     if (content.platform === "Instagram" && !account.instagramId)
       throw new Error("Instagram não vinculado.");
     if (!content.caption.trim() || content.caption.length > 2200)
@@ -296,6 +298,8 @@ export const scheduleFromMcp = internalMutation({
     if (!Number.isFinite(args.scheduledAt) || args.scheduledAt < now + 60_000 ||
         args.scheduledAt > now + 365 * 86400_000)
       throw new Error("Data/hora inválida.");
+    if (account.tokenExpiresAt && args.scheduledAt >= account.tokenExpiresAt)
+      throw new Error("Reconecte o Instagram antes de agendar para esse horário.");
     if (args.mediaUrl && !/^https:\/\//i.test(args.mediaUrl))
       throw new Error("Mídia deve estar hospedada em HTTPS público.");
 

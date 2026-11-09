@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { Link2, CalendarClock, ShieldCheck } from "lucide-react";
+import { useSearchParams } from "react-router";
 import { toast } from "sonner";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
@@ -13,10 +14,12 @@ import { SectionHeader } from "@/components/portal/Shared";
  * O estado "Scheduled" do calendário, sozinho, NÃO publica nada.
  */
 export function MetaSection() {
+  const [searchParams] = useSearchParams();
+  const connectionResult = searchParams.get("connection");
   const clients = useQuery(api.portal.listClients) ?? [];
   const content = useQuery(api.portal.listContent) ?? [];
-  const [clientChoice, setClientChoice] = useState("");
-  const selectedClientId = clientChoice || clients[0]?._id || "";
+  const [clientChoice, setClientChoice] = useState(() => searchParams.get("client") ?? "");
+  const selectedClientId = clients.find((client) => client._id === clientChoice)?._id ?? clients[0]?._id ?? "";
   const clientId = selectedClientId as Id<"clients">;
   const candidates = useQuery(api.meta.listCandidates, selectedClientId ? { clientId } : "skip") ?? [];
   const accounts = useQuery(api.meta.listAccounts, selectedClientId ? { clientId } : "skip") ?? [];
@@ -54,16 +57,16 @@ export function MetaSection() {
   );
   const contentItem = approved.find((item) => item._id === contentChoice) ?? approved[0];
   const eligibleAccounts = accounts.filter(
-    (account) => account.status === "active" &&
-      (contentItem?.platform !== "Instagram" || Boolean(account.instagramId)),
+    (account) => account.status === "active" && !account.tokenExpired &&
+      (contentItem?.platform === "Instagram" ? Boolean(account.instagramId) : Boolean(account.pageId)),
   );
   const account = eligibleAccounts.find((a) => a.id === accountChoice) ?? eligibleAccounts[0];
 
-  async function connect() {
+  async function connect(channel: "instagram" | "facebook" | "facebookInstagram") {
     if (!selectedClientId || busy) return;
     setBusy(true);
     try {
-      const url = await startConnection({ clientId });
+      const url = await startConnection({ clientId, channel });
       window.location.assign(url);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Não foi possível iniciar a Meta.");
@@ -99,7 +102,7 @@ export function MetaSection() {
     <div className="space-y-6">
       <SectionHeader
         title="Publicações Meta"
-        description="Conecte Páginas oficiais dos clientes e agende publicações aprovadas no Instagram e Facebook."
+        description="Conecte contas profissionais do Instagram e Páginas do Facebook para agendar conteúdo aprovado."
       />
       <div className="rounded-xl border border-border bg-card p-4 space-y-3">
         <h2 className="font-semibold text-sm">Conectar Claude e ChatGPT</h2>
@@ -197,20 +200,40 @@ export function MetaSection() {
           ))}
         </select>
         <p className="text-xs text-muted-foreground">
-          Cada Página deve ser vinculada ao cliente correto. O acesso é concedido via Facebook Login oficial; nunca informe senhas.
+          Vincule apenas contas da empresa selecionada. Para Instagram, autorize uma conta profissional pelo Login Unificado da Meta.
         </p>
-        <Button disabled={!selectedClientId || busy} onClick={connect}>
-          <Link2 className="mr-2 size-4" /> Conectar conta Meta
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button disabled={!selectedClientId || busy} onClick={() => void connect("instagram")}>
+            <Link2 className="mr-2 size-4" /> Conectar Instagram
+          </Button>
+          <Button variant="outline" disabled={!selectedClientId || busy} onClick={() => void connect("facebook")}>
+            Conectar Facebook
+          </Button>
+          <Button variant="outline" disabled={!selectedClientId || busy} onClick={() => void connect("facebookInstagram")}>
+            Conectar Facebook e Instagram
+          </Button>
+        </div>
+        {connectionResult === "no-pages" && (
+          <p role="status" className="text-sm text-muted-foreground">
+            Nenhuma Página apta foi retornada. Confira as permissões e, se selecionou Instagram, o vínculo com uma conta profissional.
+          </p>
+        )}
+        {connectionResult === "no-instagram" && (
+          <p role="status" className="text-sm text-muted-foreground">
+            Nenhuma conta profissional do Instagram foi compartilhada. Confira a conta e o portfólio selecionados na Meta.
+          </p>
+        )}
+        {connectionResult === "denied" && <p role="status" className="text-sm text-muted-foreground">A conexão com a Meta foi cancelada.</p>}
+        {connectionResult === "error" && <p role="status" className="text-sm text-muted-foreground">A Meta não pôde concluir a conexão. Inicie uma nova tentativa.</p>}
         {candidates.length > 0 && (
           <div className="space-y-2 border-t pt-3">
-            <p className="text-sm font-medium">Selecione a Página pertencente a esta empresa</p>
+            <p className="text-sm font-medium">Selecione a conta pertencente a esta empresa</p>
             {candidates.map((candidate) => (
               <div key={candidate.id} className="flex items-center justify-between gap-3 rounded-md border p-2">
                 <div className="min-w-0">
                   <p className="truncate text-sm font-medium">{candidate.pageName}</p>
                   <p className="text-xs text-muted-foreground">
-                    Página {candidate.pageId}{candidate.instagramId ? " · Instagram vinculado" : ""}
+                    {candidate.pageId ? `Página ${candidate.pageId}${candidate.instagramId ? " · Instagram vinculado" : ""}` : "Instagram profissional"}
                   </p>
                 </div>
                 <Button
@@ -221,7 +244,7 @@ export function MetaSection() {
                     setBusy(true);
                     try {
                       await selectAccount({ candidateId: candidate.id });
-                      toast.success("Página associada a esta empresa.");
+                      toast.success("Conta associada a esta empresa.");
                     } catch (error) {
                       toast.error(error instanceof Error ? error.message : "Não foi possível associar.");
                     } finally { setBusy(false); }
@@ -241,8 +264,15 @@ export function MetaSection() {
                 <div>
                   <p className="text-sm font-medium">{item.pageName}</p>
                   <p className="text-xs text-muted-foreground">
-                    {item.instagramId ? "Facebook + Instagram" : "Somente Facebook"} · {item.status}
+                    {item.pageId ? (item.instagramId ? "Facebook + Instagram" : "Facebook") : "Instagram"}
+                    {" · "}{item.status === "active" ? "Ativa" : "Desconectada"}
                   </p>
+                  {item.status === "active" && item.tokenExpiresAt && (
+                    <p className="text-xs text-muted-foreground">
+                      {item.tokenExpired ? "Autorização expirada. Reconecte o Instagram." :
+                        `Autorização até ${new Date(item.tokenExpiresAt).toLocaleDateString("pt-BR")}`}
+                    </p>
+                  )}
                 </div>
                 {item.status === "active" && (
                   <Button
@@ -250,7 +280,7 @@ export function MetaSection() {
                     size="sm"
                     disabled={busy}
                     onClick={async () => {
-                      if (!window.confirm("Desconectar esta Página? Agendamentos pendentes serão bloqueados.")) return;
+                      if (!window.confirm("Desconectar esta conta? Agendamentos pendentes serão cancelados.")) return;
                       setBusy(true);
                       try {
                         await disconnectAccount({ accountId: item.id });
@@ -283,7 +313,7 @@ export function MetaSection() {
         >
           {approved.map((row) => <option key={row._id} value={row._id}>{row.platform} · {row.topic}</option>)}
         </select>
-        <label htmlFor="meta-account" className="block text-xs">Página de destino</label>
+        <label htmlFor="meta-account" className="block text-xs">Conta de destino</label>
         <select
           id="meta-account"
           value={account?.id ?? ""}

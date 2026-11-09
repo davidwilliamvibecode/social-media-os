@@ -3,11 +3,12 @@
 // conteúdo Approved e agendamento explícito.
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
+import type { Id } from "./_generated/dataModel";
 import {
   action, httpAction, internalAction, internalMutation, internalQuery, mutation, query,
 } from "./_generated/server";
 import { activeUser } from "./activeUser";
-import { MetaGraphError, publishMeta, type MetaPublishRequest } from "../data/metaGraph";
+import { InstagramPreparationError, MetaGraphError, publishMeta, type MetaPublishRequest } from "../data/metaGraph";
 
 function setting(name: string): string {
   const value = process.env[name];
@@ -56,13 +57,19 @@ async function graphJSON(url: URL, token?: string): Promise<Record<string, unkno
     headers: token ? { Authorization: "Bearer " + token } : undefined,
   });
   if (!res.ok) throw new Error("Meta recusou autenticação ou consulta (HTTP " + res.status + ").");
-  return (await res.json()) as Record<string, unknown>;
+  const data = await res.json() as Record<string, unknown>;
+  if (data.error) throw new Error("Meta recusou autenticação ou consulta.");
+  return data;
 }
-function redirectResult(kind: "success" | "denied" | "error" | "no-pages"): Response {
+function redirectResult(kind: "success" | "denied" | "error" | "no-pages" | "no-instagram", clientId?: Id<"clients">): Response {
   const dest = new URL("/app/meta", setting("META_FRONTEND_ORIGIN"));
   dest.searchParams.set("connection", kind);
+  if (clientId) dest.searchParams.set("client", clientId);
   return new Response(null, { status: 302, headers: { Location: dest.toString(), "Cache-Control": "no-store" } });
 }
+
+const connectionChannel = v.optional(v.union(v.literal("facebook"), v.literal("facebookInstagram"), v.literal("instagram")));
+
 export const verifyClient = internalQuery({
   args: { clientId: v.id("clients") },
   handler: async (ctx, { clientId }) => {
@@ -76,6 +83,7 @@ export const verifyClient = internalQuery({
 export const reserveState = internalMutation({
   args: {
     ownerId: v.id("users"), clientId: v.id("clients"), digest: v.string(), expiresAt: v.number(),
+    channel: connectionChannel,
   },
   handler: async (ctx, args) => {
     const client = await ctx.db.get(args.clientId);
@@ -85,22 +93,28 @@ export const reserveState = internalMutation({
 });
 
 export const startConnection = action({
-  args: { clientId: v.id("clients") },
-  handler: async (ctx, { clientId }): Promise<string> => {
+  args: { clientId: v.id("clients"), channel: connectionChannel },
+  handler: async (ctx, { clientId, channel }): Promise<string> => {
     const owner = await ctx.runQuery(internal.meta.verifyClient, { clientId });
     const state = toBase64(crypto.getRandomValues(new Uint8Array(32)));
-    await ctx.runMutation(internal.meta.reserveState, {
-      ...owner, digest: await digest(state), expiresAt: Date.now() + 10 * 60_000,
-    });
     const url = new URL("https://www.facebook.com/" + version() + "/dialog/oauth");
     url.searchParams.set("client_id", setting("META_APP_ID"));
+    const scopes = ["pages_show_list", "pages_read_engagement", "pages_manage_posts"];
+    if (channel === "instagram") {
+      const configId = process.env.META_INSTAGRAM_CONFIG_ID;
+      if (!configId || !/^\d+$/.test(configId)) throw new Error("Configure o Login Unificado do Instagram no aplicativo Meta.");
+      url.searchParams.set("config_id", configId);
+      url.searchParams.set("prompt", "login");
+    } else {
+      if (channel !== "facebook") scopes.push("instagram_basic", "instagram_content_publish");
+      url.searchParams.set("scope", scopes.join(","));
+    }
     url.searchParams.set("redirect_uri", setting("META_REDIRECT_URI"));
     url.searchParams.set("state", state);
     url.searchParams.set("response_type", "code");
-    url.searchParams.set("scope", [
-      "pages_show_list", "pages_read_engagement", "pages_manage_posts",
-      "instagram_basic", "instagram_content_publish",
-    ].join(","));
+    await ctx.runMutation(internal.meta.reserveState, {
+      ...owner, channel, digest: await digest(state), expiresAt: Date.now() + 10 * 60_000,
+    });
     return url.toString();
   },
 });
@@ -114,14 +128,45 @@ export const redeemState = internalMutation({
     if (state.expiresAt <= Date.now()) return null;
     const client = await ctx.db.get(state.clientId);
     if (!client || client.ownerId !== state.ownerId) return null;
-    return { ownerId: state.ownerId, clientId: state.clientId };
+    return { ownerId: state.ownerId, clientId: state.clientId, channel: state.channel };
   },
 });
 
 const pendingValidator = v.object({
-  pageId: v.string(), pageName: v.string(),
-  instagramId: v.optional(v.string()), encryptedToken: v.string(),
+  pageId: v.optional(v.string()), pageName: v.string(),
+  instagramId: v.optional(v.string()), encryptedToken: v.string(), tokenExpiresAt: v.optional(v.number()),
 });
+
+async function discoverInstagramAccounts(token: string, expiresIn: unknown) {
+  const url = new URL(`https://graph.facebook.com/${version()}/me/assigned_instagram_accounts`);
+  url.searchParams.set("fields", "id,username");
+  url.searchParams.set("limit", "100");
+  const tokenExpiresAt = typeof expiresIn === "number" && Number.isFinite(expiresIn) && expiresIn > 0
+    ? Date.now() + expiresIn * 1000 : undefined;
+  const accounts = new Map<string, string>();
+  const cursors = new Set<string>();
+  for (;;) {
+    const result = await graphJSON(url, token);
+    if (!Array.isArray(result.data)) throw new Error("Lista de contas do Instagram inválida.");
+    for (const row of result.data) {
+      if (typeof row?.id !== "string" || !/^\d{5,30}$/.test(row.id) || typeof row.username !== "string" || !row.username)
+        continue;
+      accounts.set(row.id, row.username);
+    }
+    const paging = result.paging as { cursors?: { after?: unknown } } | undefined;
+    const next = paging?.cursors?.after;
+    if (!result.data.length || typeof next !== "string" || !next) break;
+    if (cursors.has(next) || cursors.size >= 10 || accounts.size > 100)
+      throw new Error("Não foi possível carregar todas as contas autorizadas.");
+    cursors.add(next);
+    url.searchParams.set("after", next);
+  }
+  if (!accounts.size) return [];
+  const encryptedToken = await encryptToken(token);
+  return Array.from(accounts, ([instagramId, username]) => ({
+    instagramId, pageName: `@${username}`, encryptedToken, tokenExpiresAt,
+  }));
+}
 export const saveCandidates = internalMutation({
   args: {
     ownerId: v.id("users"), clientId: v.id("clients"), pages: v.array(pendingValidator),
@@ -150,7 +195,6 @@ export const oauthCallback = httpAction(async (ctx, request) => {
     if (!state || !code) return redirectResult("denied");
     const owner = await ctx.runMutation(internal.meta.redeemState, { digest: await digest(state) });
     if (!owner) return redirectResult("error");
-
     const exchange = new URL("https://graph.facebook.com/" + version() + "/oauth/access_token");
     exchange.searchParams.set("client_id", setting("META_APP_ID"));
     exchange.searchParams.set("client_secret", setting("META_APP_SECRET"));
@@ -158,7 +202,13 @@ export const oauthCallback = httpAction(async (ctx, request) => {
     exchange.searchParams.set("code", code);
     const auth = await graphJSON(exchange);
     const shortToken = auth.access_token;
-    if (typeof shortToken !== "string") throw new Error("Meta não confirmou a autorização.");
+    if (typeof shortToken !== "string" || !shortToken) throw new Error("Meta não confirmou a autorização.");
+
+    if (owner.channel === "instagram") {
+      const pages = await discoverInstagramAccounts(shortToken, auth.expires_in);
+      await ctx.runMutation(internal.meta.saveCandidates, { ownerId: owner.ownerId, clientId: owner.clientId, pages });
+      return redirectResult(pages.length ? "success" : "no-instagram", owner.clientId);
+    }
 
     const long = new URL("https://graph.facebook.com/" + version() + "/oauth/access_token");
     long.searchParams.set("grant_type", "fb_exchange_token");
@@ -169,7 +219,9 @@ export const oauthCallback = httpAction(async (ctx, request) => {
     const userToken = typeof refreshed.access_token === "string" ? refreshed.access_token : shortToken;
 
     const pagesURL = new URL("https://graph.facebook.com/" + version() + "/me/accounts");
-    pagesURL.searchParams.set("fields", "id,name,access_token,tasks,instagram_business_account{id}");
+    const pageFields = "id,name,access_token,tasks";
+    pagesURL.searchParams.set("fields", owner.channel === "facebook"
+      ? pageFields : pageFields + ",instagram_business_account{id}");
     pagesURL.searchParams.set("limit", "100");
     const pages = await graphJSON(pagesURL, userToken);
     const rawPages = Array.isArray(pages.data) ? pages.data : [];
@@ -183,17 +235,21 @@ export const oauthCallback = httpAction(async (ctx, request) => {
       // ausência da permissão de criar conteúdo. Algumas respostas omitem
       // "tasks"; nesse caso a Graph API ainda validará o direito no envio.
       const tasks = page.tasks;
-      if (Array.isArray(tasks) &&
-          !tasks.includes("CREATE_CONTENT") && !tasks.includes("MANAGE")) continue;
-      const ig = page.instagram_business_account;
+      if (Array.isArray(tasks) && !tasks.some(task => [
+        "CREATE_CONTENT", "MANAGE", "PROFILE_PLUS_CREATE_CONTENT", "PROFILE_PLUS_MANAGE", "PROFILE_PLUS_FULL_CONTROL",
+      ].includes(task))) continue;
+      const ig = owner.channel === "facebook" ? undefined : page.instagram_business_account;
       const instagramId = ig && typeof ig === "object" && "id" in ig && typeof ig.id === "string" ? ig.id : undefined;
+      if (owner.channel === "facebookInstagram" && !instagramId) continue;
       selected.push({
         pageId: page.id, pageName: page.name, instagramId,
         encryptedToken: await encryptToken(page.access_token),
       });
     }
-    await ctx.runMutation(internal.meta.saveCandidates, { ...owner, pages: selected });
-    return redirectResult(selected.length ? "success" : "no-pages");
+    await ctx.runMutation(internal.meta.saveCandidates, {
+      ownerId: owner.ownerId, clientId: owner.clientId, pages: selected,
+    });
+    return redirectResult(selected.length ? "success" : "no-pages", owner.clientId);
   } catch {
     // Nunca incluir code, token, app secret ou payload Meta no corpo/log.
     return redirectResult("error");
@@ -237,14 +293,27 @@ export const selectAccount = mutation({
       throw new Error("Conexão não disponível.");
     const client = await ctx.db.get(candidate.clientId);
     if (!client || client.ownerId !== ownerId) throw new Error("Cliente inválido.");
-    const existing = await ctx.db.query("metaAccounts")
-      .withIndex("by_owner_page", q => q.eq("ownerId", ownerId).eq("pageId", candidate.pageId))
-      .unique();
+    const instagramConnections = candidate.instagramId
+      ? await ctx.db.query("metaAccounts").withIndex("by_owner_instagram", q =>
+          q.eq("ownerId", ownerId).eq("instagramId", candidate.instagramId)).collect()
+      : [];
+    if (instagramConnections.some(account => account.clientId !== candidate.clientId))
+      throw new Error("Esta conta do Instagram já está associada a outro cliente.");
+    if (!candidate.pageId && !candidate.instagramId) throw new Error("Conexão inválida.");
+    if (candidate.tokenExpiresAt && candidate.tokenExpiresAt <= Date.now())
+      throw new Error("A autorização do Instagram expirou. Reconecte a conta.");
+    const existing = candidate.pageId
+      ? await ctx.db.query("metaAccounts").withIndex("by_owner_page", q =>
+          q.eq("ownerId", ownerId).eq("pageId", candidate.pageId)).unique()
+      : instagramConnections.find(account => !account.pageId);
     if (existing && existing.clientId !== candidate.clientId)
       throw new Error("Esta Página já está associada a outro cliente.");
+    if (existing?.status === "active" && existing.instagramId && !candidate.instagramId)
+      throw new Error("Esta Página já tem Instagram vinculado. Use Facebook e Instagram para reconectar.");
     const row = {
       ownerId, clientId: candidate.clientId, pageId: candidate.pageId,
       pageName: candidate.pageName, instagramId: candidate.instagramId,
+      tokenExpiresAt: candidate.tokenExpiresAt,
       encryptedToken: candidate.encryptedToken, connectedAt: Date.now(),
       status: "active" as const,
     };
@@ -266,7 +335,8 @@ export const listAccounts = query({
       .collect())
       .map(row => ({
         id: row._id, pageId: row.pageId, pageName: row.pageName,
-        instagramId: row.instagramId, status: row.status, connectedAt: row.connectedAt,
+        instagramId: row.instagramId, status: row.status, connectedAt: row.connectedAt, tokenExpiresAt: row.tokenExpiresAt,
+        tokenExpired: row.tokenExpiresAt !== undefined && row.tokenExpiresAt <= Date.now(),
       }));
   },
 });
@@ -312,7 +382,10 @@ export const schedulePost = mutation({
     if (content.status !== "Approved") throw new Error("Aprovação pendente.");
     const platform = content.platform;
     if (platform !== "Facebook" && platform !== "Instagram") throw new Error("Plataforma não suportada.");
+    if (platform === "Facebook" && !account.pageId) throw new Error("Página do Facebook não vinculada.");
     if (platform === "Instagram" && !account.instagramId) throw new Error("Conta Instagram não vinculada.");
+    if (account.tokenExpiresAt && args.scheduledAt >= account.tokenExpiresAt)
+      throw new Error("Reconecte o Instagram antes de agendar para esse horário.");
     let format: "text" | "image" | "reel";
     if (platform === "Facebook") {
       if (content.format === "Reel" || content.format === "Carousel" || content.format === "Story")
@@ -395,10 +468,17 @@ export const claimPost = internalMutation({
     const content = await ctx.db.get(post.contentId);
     if (!account || !client || !content || account.status !== "active" ||
         account.ownerId !== post.ownerId || account.clientId !== post.clientId ||
-        account.pageId !== post.targetPageId || account.instagramId !== post.targetInstagramId ||
+        account.pageId !== post.targetPageId ||
+        (post.platform === "Facebook" && !account.pageId) ||
+        (post.platform === "Instagram" && (!account.instagramId || account.instagramId !== post.targetInstagramId)) ||
         client.ownerId !== post.ownerId || content.ownerId !== post.ownerId ||
         content.clientId !== post.clientId) {
       await ctx.db.patch(postId, { status: "failed", updatedAt: Date.now(), lastError: "Vínculo inválido ou desconectado." });
+      return null;
+    }
+    if (account.tokenExpiresAt && account.tokenExpiresAt <= Date.now()) {
+      await ctx.db.patch(postId, { status: "failed", updatedAt: Date.now(), lastError: "Autorização do Instagram expirada. Reconecte a conta." });
+      if (content.status === "Scheduled") await ctx.db.patch(content._id, { status: "Approved" });
       return null;
     }
     await ctx.db.patch(postId, { status: "publishing", updatedAt: Date.now() });
@@ -443,6 +523,7 @@ export const deliverPost = internalAction({
       const accessToken = await decryptToken(job.encryptedToken);
       let request: MetaPublishRequest;
       if (job.platform === "Facebook") {
+        if (!job.pageId) throw new Error("Página do Facebook inválida.");
         request = job.format === "image" && job.mediaUrl
           ? { platform: "facebook", format: "image", pageId: job.pageId, caption: job.caption, mediaUrl: job.mediaUrl, accessToken }
           : { platform: "facebook", format: "text", pageId: job.pageId, caption: job.caption, accessToken };
@@ -465,10 +546,13 @@ export const deliverPost = internalAction({
       // Manter o estado incerto e exigir conciliação manual (sem duplicar posts).
       const rejected = error instanceof MetaGraphError &&
         error.status >= 400 && error.status < 500;
+      const preparationFailed = error instanceof InstagramPreparationError;
       await ctx.runMutation(internal.meta.completePost, {
         postId,
-        outcome: rejected ? "failed" : "uncertain",
-        lastError: rejected
+        outcome: rejected || preparationFailed ? "failed" : "uncertain",
+        lastError: preparationFailed
+          ? "A mídia não ficou pronta no Instagram. Confira o formato e a URL antes de reagendar."
+          : rejected
           ? "A Meta recusou a publicação. Verifique conta, permissões e mídia."
           : "Resultado incerto: conferir na Meta antes de tentar novamente.",
       });

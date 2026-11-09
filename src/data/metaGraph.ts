@@ -72,6 +72,9 @@ export class MetaGraphError extends Error {
   }
 }
 
+/** A tentativa parou antes de solicitar a publicação do contêiner. */
+export class InstagramPreparationError extends Error {}
+
 function graphId(value: string): string {
   if (!/^\d{5,30}$/.test(value)) {
     throw new Error("Identificador da conta Meta inválido.");
@@ -119,7 +122,7 @@ function makeClient(options: MetaGraphOptions) {
     options.wait ??
     ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const maxChecks = options.maxChecks ?? 6;
-  const checkIntervalMs = options.checkIntervalMs ?? 3000;
+  const checkIntervalMs = options.checkIntervalMs ?? 60_000;
   if (!Number.isInteger(maxChecks) || maxChecks < 1 || maxChecks > 30) {
     throw new Error("Quantidade de verificações inválida.");
   }
@@ -208,15 +211,21 @@ export async function publishMeta(
   }
 
   const igId = graphId(item.instagramAccountId);
-  const response = await call(igId, "media", item.accessToken, {
-    ...(item.format === "reel" ? { media_type: "REELS", share_to_feed: "true" } : {}),
-    [item.format === "reel" ? "video_url" : "image_url"]: publicMediaUrl(item.mediaUrl),
-    caption: item.caption,
-  });
-  if (!response.id) throw new Error("Meta não retornou identificador da mídia.");
-  await ready(response.id, item.accessToken);
+  let containerId: string;
+  try {
+    const response = await call(igId, "media", item.accessToken, {
+      ...(item.format === "reel" ? { media_type: "REELS", share_to_feed: "true" } : {}),
+      [item.format === "reel" ? "video_url" : "image_url"]: publicMediaUrl(item.mediaUrl),
+      caption: item.caption,
+    });
+    if (!response.id) throw new Error("Meta não retornou identificador da mídia.");
+    containerId = response.id;
+    await ready(containerId, item.accessToken);
+  } catch (error) {
+    throw new InstagramPreparationError(error instanceof Error ? error.message : "Mídia indisponível.");
+  }
   const published = await call(igId, "media_publish", item.accessToken, {
-    creation_id: response.id,
+    creation_id: containerId,
   });
   if (!published.id) throw new Error("Meta não confirmou o identificador da publicação.");
   return { platform: "instagram", id: published.id };

@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { convexTest } from "convex-test";
 import { api, internal } from "../src/convex/_generated/api";
 import schema from "../src/convex/schema";
@@ -8,6 +8,8 @@ const modules = {
   "../src/convex/_generated/api.js": () => import("../src/convex/_generated/api"),
   "../src/convex/meta.ts": () => import("../src/convex/meta"),
   "../src/convex/metaMcp.ts": () => import("../src/convex/metaMcp"),
+  "../src/convex/http.ts": () => import("../src/convex/http"),
+  "../src/convex/auth.ts": () => import("../src/convex/auth"),
   "../src/convex/portal.ts": () => import("../src/convex/portal"),
 };
 
@@ -50,6 +52,145 @@ async function setup() {
     bob: await signedIdentity(t, ids.bob),
   };
 }
+
+describe("Conexão Meta por canal", () => {
+  test("OAuth de Facebook funciona sem Instagram e o fluxo combinado mantém as permissões próprias", async () => {
+    const { t, alice, ids } = await setup();
+    const settings = {
+      META_APP_ID: "app-teste", META_APP_SECRET: "segredo-ficticio", META_GRAPH_VERSION: "v27.0",
+      META_REDIRECT_URI: "https://backend.example.test/meta/oauth/callback",
+      META_FRONTEND_ORIGIN: "https://app.example.test", META_TOKEN_KEY_B64: btoa("a".repeat(32)),
+    };
+    const previous = Object.keys(settings).map((key) => [key, process.env[key]] as const);
+    Object.assign(process.env, settings);
+    const pageFields: (string | null)[] = [];
+    const graph = spyOn(globalThis, "fetch").mockImplementation(async (request) => {
+      const url = new URL(String(request));
+      if (url.pathname.endsWith("/oauth/access_token")) return Response.json({ access_token: "user-test" });
+      if (!url.pathname.endsWith("/me/accounts")) throw new Error("Requisição Graph inesperada.");
+      pageFields.push(url.searchParams.get("fields"));
+      return Response.json({ data: [
+        { id: "123456789", name: "Página A", access_token: "page-test", tasks: ["CREATE_CONTENT"] },
+        { id: "987654321", name: "Página B", access_token: "page-test", tasks: ["PROFILE_PLUS_CREATE_CONTENT"],
+          instagram_business_account: { id: "555555555" } },
+        { id: "333333333", name: "Página de anúncios", access_token: "page-test", tasks: ["PROFILE_PLUS_ADVERTISE"] },
+      ] });
+    });
+    try {
+      const cases = [
+        { channel: "facebook", candidates: [["123456789", undefined], ["987654321", undefined]] },
+        { channel: "facebookInstagram", candidates: [["987654321", "555555555"]] },
+        { channel: undefined, candidates: [["123456789", undefined], ["987654321", "555555555"]] },
+      ] as const;
+      for (const scenario of cases) {
+        const url = new URL(await alice.action(api.meta.startConnection, { clientId: ids.aliceClient, channel: scenario.channel }));
+        const expectedScopes = ["pages_show_list", "pages_read_engagement", "pages_manage_posts"];
+        if (scenario.channel !== "facebook") expectedScopes.push("instagram_basic", "instagram_content_publish");
+        expect(url.searchParams.get("scope")).toBe(expectedScopes.join(","));
+        const callback = await t.fetch(`/meta/oauth/callback?code=fake-code&state=${url.searchParams.get("state")}`);
+        expect(callback.status).toBe(302);
+        expect(callback.headers.get("location")).toBe(`https://app.example.test/app/meta?connection=success&client=${ids.aliceClient}`);
+        const candidates = await alice.query(api.meta.listCandidates, { clientId: ids.aliceClient });
+        expect(candidates.map(({ pageId, instagramId }) => [pageId, instagramId])).toEqual(scenario.candidates);
+      }
+      expect(pageFields).toEqual([
+        "id,name,access_token,tasks",
+        "id,name,access_token,tasks,instagram_business_account{id}",
+        "id,name,access_token,tasks,instagram_business_account{id}",
+      ]);
+    } finally {
+      graph.mockRestore();
+      for (const [key, value] of previous) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  });
+
+  test("conectar apenas Facebook não sobrescreve a autorização combinada existente", async () => {
+    const { t, alice, ids } = await setup();
+    await t.run(ctx => ctx.db.patch(ids.account, { instagramId: "555555555", encryptedToken: "combined" }));
+    await expect(alice.mutation(api.meta.selectAccount, { candidateId: ids.candidate })).rejects.toThrow("Instagram vinculado");
+    const account = await t.run(ctx => ctx.db.get(ids.account));
+    expect(account?.encryptedToken).toBe("combined");
+    expect(account?.instagramId).toBe("555555555");
+  });
+
+  test("Instagram pelo Login Unificado vincula e publica sem Página, usando o destino autorizado", async () => {
+    const { t, alice, ids } = await setup();
+    const settings = {
+      META_APP_ID: "meta-app-test", META_APP_SECRET: "meta-secret-test", META_INSTAGRAM_CONFIG_ID: "10012345",
+      META_GRAPH_VERSION: "v27.0", META_REDIRECT_URI: "https://backend.example.test/meta/oauth/callback",
+      META_FRONTEND_ORIGIN: "https://app.example.test", META_TOKEN_KEY_B64: btoa("b".repeat(32)),
+      META_PUBLISHING_ENABLED: "true",
+    };
+    const previous = Object.keys(settings).map(key => [key, process.env[key]] as const);
+    Object.assign(process.env, settings);
+    const calls: string[] = [];
+    const graph = spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = new URL(String(input));
+      calls.push(`${url.hostname}${url.pathname}`);
+      expect(url.hostname).toBe("graph.facebook.com");
+      if (url.pathname === "/v27.0/oauth/access_token") {
+        expect(url.searchParams.get("code")).toBe("test-code");
+        return Response.json({ access_token: "system-user-test", expires_in: 5_184_000 });
+      }
+      expect(new Headers(init?.headers).get("authorization")).toBe("Bearer system-user-test");
+      switch (url.pathname) {
+        case "/v27.0/me/assigned_instagram_accounts":
+          if (url.searchParams.get("after") === "next-page") return Response.json({ data: [] });
+          return Response.json({ data: [{ id: "17840000000000001", username: "conta_teste" }], paging: { cursors: { after: "next-page" } } });
+        case "/v27.0/17840000000000001/media": return Response.json({ id: "222222222" });
+        case "/v27.0/222222222": return Response.json({ status_code: "FINISHED" });
+        case "/v27.0/17840000000000001/media_publish": return Response.json({ id: "444444444" });
+        default: throw new Error("Requisição Instagram inesperada.");
+      }
+    });
+    try {
+      const url = new URL(await alice.action(api.meta.startConnection, { clientId: ids.aliceClient, channel: "instagram" }));
+      expect(url.origin).toBe("https://www.facebook.com");
+      expect(url.searchParams.get("client_id")).toBe("meta-app-test");
+      expect(url.searchParams.get("config_id")).toBe("10012345");
+      expect(url.searchParams.get("scope")).toBeNull();
+      const callback = await t.fetch(`/meta/oauth/callback?code=test-code&state=${url.searchParams.get("state")}`);
+      expect(callback.headers.get("location")).toBe(`https://app.example.test/app/meta?connection=success&client=${ids.aliceClient}`);
+      const candidates = await alice.query(api.meta.listCandidates, { clientId: ids.aliceClient });
+      expect(candidates).toHaveLength(1);
+      expect(candidates[0]).toMatchObject({ pageName: "@conta_teste", instagramId: "17840000000000001" });
+      expect(candidates[0].pageId).toBeUndefined();
+      const accountId = await alice.mutation(api.meta.selectAccount, { candidateId: candidates[0].id });
+
+      const other = await t.run(ctx => ctx.db.insert("metaCandidates", {
+        ownerId: ids.alice, clientId: ids.aliceOtherClient, pageName: "@conta_teste",
+        instagramId: "17840000000000001", encryptedToken: "ficticio", expiresAt: Date.now() + 60_000,
+      }));
+      await expect(alice.mutation(api.meta.selectAccount, { candidateId: other })).rejects.toThrow("outro cliente");
+      const scheduledAt = Date.now() + 120_000;
+      const post = { accountId, contentId: ids.content, scheduledAt, mediaUrl: "https://example.test/arte.jpg" };
+      await expect(alice.mutation(api.meta.schedulePost, post)).rejects.toThrow("Página do Facebook");
+      await t.run(ctx => ctx.db.patch(ids.content, { platform: "Instagram" }));
+      await expect(alice.mutation(api.meta.schedulePost, {
+        ...post, scheduledAt: Date.now() + 61 * 86_400_000,
+      })).rejects.toThrow("Reconecte o Instagram");
+      const postId = await alice.mutation(api.meta.schedulePost, post);
+      await t.run(ctx => ctx.db.patch(postId, { scheduledAt: Date.now() - 1 }));
+      await t.action(internal.meta.deliverPost, { postId });
+      await t.action(internal.meta.deliverPost, { postId });
+      expect(await t.run(ctx => ctx.db.get(postId))).toMatchObject({ status: "published", publishedId: "444444444" });
+      expect(calls).toEqual([
+        "graph.facebook.com/v27.0/oauth/access_token", "graph.facebook.com/v27.0/me/assigned_instagram_accounts",
+        "graph.facebook.com/v27.0/me/assigned_instagram_accounts", "graph.facebook.com/v27.0/17840000000000001/media",
+        "graph.facebook.com/v27.0/222222222", "graph.facebook.com/v27.0/17840000000000001/media_publish",
+      ]);
+    } finally {
+      graph.mockRestore();
+      for (const [key, value] of previous) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  });
+});
 
 describe("Meta multicliente — isolamento", () => {
   test("gestor B não enxerga contas Meta ou conteúdos aprovados do gestor A", async () => {
@@ -169,6 +310,21 @@ describe("Meta multicliente — agendamento seguro", () => {
       const row = await t.run(ctx => ctx.db.get(postId));
       expect(row?.status).toBe("failed");
       expect(row?.lastError).toContain("Vínculo");
+    });
+  });
+
+  test("adicionar Instagram à mesma Página mantém o destino de um post Facebook", async () => {
+    await withPublishingEnabled(async () => {
+      const { alice, t, ids } = await setup();
+      const postId = await alice.mutation(api.meta.schedulePost, {
+        contentId: ids.content, accountId: ids.account, scheduledAt: Date.now() + 100000,
+      });
+      await t.run(async (ctx) => {
+        await ctx.db.patch(ids.account, { instagramId: "555555555" });
+        await ctx.db.patch(postId, { scheduledAt: Date.now() - 1000 });
+      });
+      const job = await t.mutation(internal.meta.claimPost, { postId });
+      expect(job?.pageId).toBe("123456789");
     });
   });
 

@@ -7,8 +7,8 @@
 A mesma instalação Social Media OS poderá organizar vários gestores, com diversos clientes por gestor. O backend Convex valida `ownerId` e `clientId` em conexões, rascunhos, consultas e publicações.
 
 1. O gestor cadastra uma empresa em `Clientes`.
-2. No painel `Publicações Meta`, escolhe essa empresa e usa **Conectar conta Meta**, via Facebook Login oficial.
-3. Depois do OAuth, seleciona uma Página Facebook daquela empresa; uma conta Instagram profissional vinculada pode ser disponibilizada junto.
+2. No painel `Publicações Meta`, escolhe a empresa e usa **Conectar Instagram** para uma conta profissional via Login Unificado da Meta. **Conectar Facebook** serve para uma Página e **Conectar Facebook e Instagram** para uma Página com Instagram profissional vinculado.
+3. Depois do login oficial, confirma o vínculo da conta com a empresa escolhida. No Instagram direto, a tela exibe a validade da autorização. Para agendar além desse prazo, reconecte a conta.
 4. O gestor/Claude prepara o conteúdo no calendário e passa pelo status **Aprovado**.
 5. O gestor ou Claude agenda com data, horário, Página, legenda e mídia aprovada.
 6. O Convex executa job persistente no horário e publica via Graph API.
@@ -45,6 +45,7 @@ Não ativar sem terminar a implantação e os testes reais:
 
 - `META_APP_ID`: App ID da Meta.
 - `META_APP_SECRET`: segredo do aplicativo Meta.
+- `META_INSTAGRAM_CONFIG_ID`: ID da configuração do Login Unificado no aplicativo Meta existente, vinculado a um portfólio empresarial. Cadastre o mesmo `META_REDIRECT_URI`, selecione o token de usuário do sistema e configure apenas o ativo Instagram e as permissões `instagram_basic` e `instagram_content_publish` para publicar.
 - `META_GRAPH_VERSION`: versão da Graph API compatível e autorizada (formato `vXX.X`).
 - `META_REDIRECT_URI`: URL exata do callback no Convex, como `https://SEU-DEPLOYMENT.convex.site/meta/oauth/callback`.
 - `META_FRONTEND_ORIGIN`: origem exata do site Social Media OS (sem barra final), como `https://SEU-PROJETO.pages.dev`.
@@ -77,7 +78,7 @@ Os endereços abaixo já constam da instalação documentada em `docs/implantaca
 1. Acesse https://developers.facebook.com/apps/ e crie um aplicativo do tipo adequado a Facebook Login e publicação.
 2. Cadastre a URI exata do callback do Convex e os domínios permitidos. O uso de `*.pages.dev` na interface não elimina a necessidade de URI HTTPS válida e configuração da Meta.
 3. Solicite apenas as permissões necessárias, conforme revisão atual da Meta: `pages_show_list`, `pages_read_engagement`, `pages_manage_posts`, `instagram_basic`, `instagram_content_publish`.
-4. Para teste inicial, use uma Página de teste sob sua administração e uma conta Instagram profissional vinculada. As credenciais são concedidas por Facebook Login; clientes **não compartilham senhas**.
+4. Para testar o Login Unificado do Instagram, use uma conta profissional de teste autorizada no app e disponível no portfólio selecionado. Uma Página do Facebook só é necessária ao escolher o fluxo combinado.
 5. Antes de conectar contas comerciais de empresas externas, obtenha o nível de acesso/avaliação exigido pela Meta (App Review, Advanced Access e eventual verificação do negócio).
 6. Configure segredos somente no Convex e habilite `VITE_META_ENABLED=true` no build Cloudflare Pages para visualizar a tela de conexão.
 7. Mantenha `META_PUBLISHING_ENABLED` desativado até concluir teste de OAuth, separação entre empresas, aprovação, cancelamento, agendamento e publicação de teste.

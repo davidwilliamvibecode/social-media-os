@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { MetaGraphError, publishMeta } from "../src/data/metaGraph";
+import { InstagramPreparationError, MetaGraphError, publishMeta } from "../src/data/metaGraph";
 
 type Captured = { url: URL; method: string; body: URLSearchParams; authorization: string };
 
@@ -93,7 +93,19 @@ describe("Meta Graph: publicação isolada sem chamadas reais", () => {
       "/v25.0/111111111/media_publish",
     ]);
     expect(m.calls[3].body.get("creation_id")).toBe("222222222");
-    expect(waits).toEqual([3000]);
+    expect(waits).toEqual([60_000]);
+  });
+
+  test("Reel que ainda está processando falha antes de solicitar a publicação", async () => {
+    const m = mockFetch([{ data: { id: "222222222" } }, { data: { status_code: "IN_PROGRESS" } }]);
+    await expect(publishMeta({
+      platform: "instagram", format: "reel", instagramAccountId: "111111111",
+      caption: "Reel aprovado", mediaUrl: "https://assets.exemplo.com/reel.mp4", accessToken: "TOKEN",
+    }, { version: "v27.0", fetchImpl: m.fetchImpl, maxChecks: 1 })).rejects.toBeInstanceOf(InstagramPreparationError);
+    expect(m.calls.map(call => call.url.toString())).toEqual([
+      "https://graph.facebook.com/v27.0/111111111/media", "https://graph.facebook.com/v27.0/222222222?fields=status_code",
+    ]);
+    expect(m.calls[0].body.get("media_type")).toBe("REELS");
   });
 
   test("rejeita URL insegura, sem chamar a Meta", async () => {
