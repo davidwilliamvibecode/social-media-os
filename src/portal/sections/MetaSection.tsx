@@ -62,11 +62,11 @@ export function MetaSection() {
   );
   const account = eligibleAccounts.find((a) => a.id === accountChoice) ?? eligibleAccounts[0];
 
-  async function connect(channel: "instagram" | "facebook" | "facebookInstagram") {
+  async function connect(channel: "instagram" | "facebook") {
     if (!selectedClientId || busy) return;
     setBusy(true);
     try {
-      const url = await startConnection({ clientId, channel });
+      const url = await startConnection({ clientId, channel, provider: "zernio" });
       window.location.assign(url);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Não foi possível iniciar a Meta.");
@@ -200,7 +200,7 @@ export function MetaSection() {
           ))}
         </select>
         <p className="text-xs text-muted-foreground">
-          Vincule apenas contas da empresa selecionada. Para Instagram, autorize uma conta profissional pelo Login Unificado da Meta.
+          Entre no Instagram com uma conta profissional ou no Facebook para escolher uma Página que você administra.
         </p>
         <div className="flex flex-wrap gap-2">
           <Button disabled={!selectedClientId || busy} onClick={() => void connect("instagram")}>
@@ -208,9 +208,6 @@ export function MetaSection() {
           </Button>
           <Button variant="outline" disabled={!selectedClientId || busy} onClick={() => void connect("facebook")}>
             Conectar Facebook
-          </Button>
-          <Button variant="outline" disabled={!selectedClientId || busy} onClick={() => void connect("facebookInstagram")}>
-            Conectar Facebook e Instagram
           </Button>
         </div>
         {connectionResult === "no-pages" && (
@@ -223,8 +220,8 @@ export function MetaSection() {
             Nenhuma conta profissional do Instagram foi compartilhada. Confira a conta e o portfólio selecionados na Meta.
           </p>
         )}
-        {connectionResult === "denied" && <p role="status" className="text-sm text-muted-foreground">A conexão com a Meta foi cancelada.</p>}
-        {connectionResult === "error" && <p role="status" className="text-sm text-muted-foreground">A Meta não pôde concluir a conexão. Inicie uma nova tentativa.</p>}
+        {connectionResult === "denied" && <p role="status" className="text-sm text-muted-foreground">A autorização foi cancelada ou ficou incompleta.</p>}
+        {connectionResult === "error" && <p role="status" className="text-sm text-muted-foreground">Não foi possível confirmar a conta autorizada. Inicie uma nova tentativa.</p>}
         {candidates.length > 0 && (
           <div className="space-y-2 border-t pt-3">
             <p className="text-sm font-medium">Selecione a conta pertencente a esta empresa</p>
@@ -364,7 +361,7 @@ export function MetaSection() {
               <p className="font-medium">{post.platform} · {post.status}</p>
               <p className="text-muted-foreground">{new Date(post.scheduledAt).toLocaleString("pt-BR")}</p>
               {post.lastError && <p className="text-destructive">{post.lastError}</p>}
-              {post.publishedId && <p className="text-muted-foreground">ID Meta: {post.publishedId}</p>}
+              {post.publishedId && <p className="text-muted-foreground">ID da publicação {post.publishedId}</p>}
             </div>
             {post.status === "scheduled" && (
               <Button

@@ -252,6 +252,7 @@ const schema = defineSchema(
       digest: v.string(),
       expiresAt: v.number(),
       channel: v.optional(v.union(v.literal("facebook"), v.literal("facebookInstagram"), v.literal("instagram"))),
+      zernioProfileId: v.optional(v.string()),
     })
       .index("by_digest", ["digest"])
       .index("by_owner_client", ["ownerId", "clientId"])
@@ -265,6 +266,7 @@ const schema = defineSchema(
       instagramId: v.optional(v.string()),
       tokenExpiresAt: v.optional(v.number()),
       encryptedToken: v.string(),
+      zernioAccountId: v.optional(v.string()),
       expiresAt: v.number(),
     })
       .index("by_owner_client", ["ownerId", "clientId"])
@@ -278,6 +280,7 @@ const schema = defineSchema(
       instagramId: v.optional(v.string()),
       tokenExpiresAt: v.optional(v.number()),
       encryptedToken: v.string(),
+      zernioAccountId: v.optional(v.string()),
       connectedAt: v.number(),
       status: v.union(v.literal("active"), v.literal("revoked")),
     })

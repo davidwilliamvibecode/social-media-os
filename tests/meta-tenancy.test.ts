@@ -54,6 +54,100 @@ async function setup() {
 }
 
 describe("Conexão Meta por canal", () => {
+  test("Zernio vincula Instagram e Facebook separadamente e publica pelo destino aprovado", async () => {
+    const { t, alice, bob, ids } = await setup();
+    const settings = {
+      ZERNIO_API_KEY: "chave-teste", META_REDIRECT_URI: "https://backend.example.test/meta/oauth/callback",
+      META_FRONTEND_ORIGIN: "https://app.example.test", META_PUBLISHING_ENABLED: "true",
+    };
+    const previous = Object.keys(settings).map(key => [key, process.env[key]] as const);
+    Object.assign(process.env, settings);
+    const profileId = "a".repeat(24);
+    const accountIds = { instagram: "b".repeat(24), facebook: "c".repeat(24) };
+    const redirects: string[] = [];
+    const publishKeys: string[] = [];
+    const profileKeys: string[] = [];
+    const provider = spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = new URL(String(input));
+      expect(url.origin).toBe("https://zernio.com");
+      const headers = new Headers(init?.headers);
+      expect(headers.get("authorization")).toBe("Bearer chave-teste");
+      if (url.pathname.endsWith("/profiles")) {
+        profileKeys.push(headers.get("idempotency-key") ?? "");
+        return Response.json({ profile: { _id: profileId } }, { status: 201 });
+      }
+      if (url.pathname.includes("/connect/")) {
+        expect(url.searchParams.get("profileId")).toBe(profileId);
+        if (url.pathname.endsWith("/instagram")) expect(url.searchParams.get("loginMethod")).toBe("instagram_login");
+        else expect(url.searchParams.get("loginMethod")).toBeNull();
+        redirects.push(url.searchParams.get("redirect_url") ?? "");
+        return Response.json({ authUrl: "https://www.instagram.com/oauth/authorize" });
+      }
+      if (url.pathname.endsWith("/accounts")) {
+        const platform = url.searchParams.get("platform") === "instagram" ? "instagram" : "facebook";
+        return Response.json({ accounts: [{
+          _id: accountIds[platform], platform, profileId: { _id: profileId }, isActive: true,
+          platformUserId: platform === "instagram" ? "8888877777" : "7777788888", username: "perfil_teste",
+          metadata: platform === "instagram" ? { instagramScopedId: "17840000000000001" } : {},
+        }] });
+      }
+      expect(url.pathname).toBe("/api/v1/posts");
+      publishKeys.push(headers.get("idempotency-key") ?? "");
+      const body = JSON.parse(String(init?.body));
+      const target = body.platforms[0];
+      expect(target.accountId).toBe(accountIds[target.platform as keyof typeof accountIds]);
+      expect(body.publishNow).toBe(true);
+      expect(body.mediaItems).toEqual(target.platform === "instagram" ? [{ type: "image", url: "https://example.test/arte.jpg" }] : undefined);
+      return Response.json({ post: { status: "published", platforms: [{ ...target, status: "published", platformPostId: `live-${target.platform}` }] } }, { status: 201 });
+    });
+    try {
+      await expect(bob.action(api.meta.startConnection, {
+        clientId: ids.aliceClient, channel: "instagram", provider: "zernio",
+      })).rejects.toThrow("Cliente sem acesso");
+      for (const channel of ["instagram", "facebook"] as const) {
+        const begin = () => alice.action(api.meta.startConnection, { clientId: ids.aliceOtherClient, channel, provider: "zernio" });
+        await begin();
+        const callback = new URL(redirects.at(-1)!);
+        callback.searchParams.set("connected", channel);
+        callback.searchParams.set("profileId", "d".repeat(24));
+        callback.searchParams.set("accountId", accountIds[channel]);
+        const finish = (url: URL) => t.fetch(`${url.pathname}${url.search}`);
+        expect((await finish(callback)).headers.get("location")).toContain("connection=denied");
+        callback.searchParams.set("profileId", profileId);
+        expect((await finish(callback)).headers.get("location")).toContain("connection=error");
+        await begin();
+        callback.searchParams.set("state", new URL(redirects.at(-1)!).searchParams.get("state")!);
+        expect((await finish(callback)).headers.get("location")).toContain(`connection=success&client=${ids.aliceOtherClient}`);
+        const candidates = await alice.query(api.meta.listCandidates, { clientId: ids.aliceOtherClient });
+        expect(candidates).toHaveLength(1);
+        const accountId = await alice.mutation(api.meta.selectAccount, { candidateId: candidates[0].id });
+        const platform = channel === "instagram" ? "Instagram" : "Facebook";
+        const contentId = await t.run(async ctx => {
+          const { _id, _creationTime, ...content } = (await ctx.db.get(ids.content))!;
+          void _id; void _creationTime;
+          return ctx.db.insert("content", { ...content, clientId: ids.aliceOtherClient, platform });
+        });
+        const postId = await alice.mutation(api.meta.schedulePost, {
+          contentId, accountId, scheduledAt: Date.now() + 120_000,
+          ...(channel === "instagram" ? { mediaUrl: "https://example.test/arte.jpg" } : {}),
+        });
+        await t.run(ctx => ctx.db.patch(postId, { scheduledAt: Date.now() - 1 }));
+        await t.action(internal.meta.deliverPost, { postId });
+        await t.action(internal.meta.deliverPost, { postId });
+        expect(await t.run(ctx => ctx.db.get(postId))).toMatchObject({ status: "published", publishedId: `live-${channel}` });
+        expect(publishKeys.at(-1)).toBe(`smos-post-${postId}`);
+      }
+      expect(publishKeys).toHaveLength(2);
+      expect(new Set(profileKeys).size).toBe(1);
+    } finally {
+      provider.mockRestore();
+      for (const [key, value] of previous) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  });
+
   test("OAuth de Facebook funciona sem Instagram e o fluxo combinado mantém as permissões próprias", async () => {
     const { t, alice, ids } = await setup();
     const settings = {

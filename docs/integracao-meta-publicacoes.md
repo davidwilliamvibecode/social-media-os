@@ -7,12 +7,14 @@
 A mesma instalação Social Media OS poderá organizar vários gestores, com diversos clientes por gestor. O backend Convex valida `ownerId` e `clientId` em conexões, rascunhos, consultas e publicações.
 
 1. O gestor cadastra uma empresa em `Clientes`.
-2. No painel `Publicações Meta`, escolhe a empresa e usa **Conectar Instagram** para uma conta profissional via Login Unificado da Meta. **Conectar Facebook** serve para uma Página e **Conectar Facebook e Instagram** para uma Página com Instagram profissional vinculado.
-3. Depois do login oficial, confirma o vínculo da conta com a empresa escolhida. No Instagram direto, a tela exibe a validade da autorização. Para agendar além desse prazo, reconecte a conta.
+2. No painel `Publicações Meta`, escolhe a empresa e usa **Conectar Instagram** para entrar com uma conta profissional ou **Conectar Facebook** para autorizar uma Página que administra. O Zernio fornece a autorização das duas redes.
+3. Depois do login oficial, confirma o vínculo da conta com a empresa escolhida. O Social Media OS verifica a conta retornada no perfil Zernio dessa empresa.
 4. O gestor/Claude prepara o conteúdo no calendário e passa pelo status **Aprovado**.
 5. O gestor ou Claude agenda com data, horário, Página, legenda e mídia aprovada.
-6. O Convex executa job persistente no horário e publica via Graph API.
-7. O histórico guarda status e ID da Meta. Em falhas de resposta após o envio, mantém **incerto**, sem repetir para evitar duplicação.
+6. O Convex executa o agendamento no horário. Conexões novas publicam pela API do Zernio e conexões antigas mantêm a integração original.
+7. O histórico guarda status e ID da publicação. Em falhas de resposta após o envio, mantém **incerto**, sem repetir para evitar duplicação.
+
+Para ativar novas conexões, configure `ZERNIO_API_KEY` somente no Convex de produção e mantenha `META_REDIRECT_URI` e `META_FRONTEND_ORIGIN` configurados. O app cria um perfil Zernio por empresa. Antes de habilitar `META_PUBLISHING_ENABLED`, confira a conta autorizada e prepare uma publicação de teste aprovada. Para remover a autorização externa ou encerrar a cobrança da conexão, desconecte a conta também no painel Zernio.
 
 **Escopo de publicações implantado no backend:** Facebook Page texto/foto e Instagram profissional imagem única/Reel. Stories, carrosséis e vídeos Facebook não foram implementados. O conector do Canva pode ajudar com a criação do conteúdo, mas uma URL de mídia HTTPS pública acessível pela Meta é necessária nas publicações com imagem/vídeo.
 

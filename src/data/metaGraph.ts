@@ -82,7 +82,7 @@ function graphId(value: string): string {
   return value;
 }
 
-function publicMediaUrl(raw: string): string {
+export function publicMediaUrl(raw: string): string {
   let url: URL;
   try {
     url = new URL(raw);

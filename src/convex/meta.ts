@@ -9,6 +9,7 @@ import {
 } from "./_generated/server";
 import { activeUser } from "./activeUser";
 import { InstagramPreparationError, MetaGraphError, publishMeta, type MetaPublishRequest } from "../data/metaGraph";
+import { getOrCreateZernioProfile, getZernioAccount, getZernioConnectUrl, publishWithZernio, ZernioRejected } from "../data/zernio";
 
 function setting(name: string): string {
   const value = process.env[name];
@@ -84,6 +85,7 @@ export const reserveState = internalMutation({
   args: {
     ownerId: v.id("users"), clientId: v.id("clients"), digest: v.string(), expiresAt: v.number(),
     channel: connectionChannel,
+    zernioProfileId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const client = await ctx.db.get(args.clientId);
@@ -93,10 +95,22 @@ export const reserveState = internalMutation({
 });
 
 export const startConnection = action({
-  args: { clientId: v.id("clients"), channel: connectionChannel },
-  handler: async (ctx, { clientId, channel }): Promise<string> => {
+  args: { clientId: v.id("clients"), channel: connectionChannel, provider: v.optional(v.literal("zernio")) },
+  handler: async (ctx, { clientId, channel, provider }): Promise<string> => {
     const owner = await ctx.runQuery(internal.meta.verifyClient, { clientId });
     const state = toBase64(crypto.getRandomValues(new Uint8Array(32)));
+    if (provider === "zernio") {
+      if (channel !== "instagram" && channel !== "facebook") throw new Error("Selecione Instagram ou Facebook.");
+      const callback = new URL(setting("META_REDIRECT_URI"));
+      const profileKey = await digest(`${callback.origin}/${owner.ownerId}/${clientId}`);
+      const zernioProfileId = await getOrCreateZernioProfile(profileKey);
+      callback.searchParams.set("state", state);
+      const authUrl = await getZernioConnectUrl(channel, zernioProfileId, callback.toString());
+      await ctx.runMutation(internal.meta.reserveState, {
+        ...owner, channel, zernioProfileId, digest: await digest(state), expiresAt: Date.now() + 10 * 60_000,
+      });
+      return authUrl;
+    }
     const url = new URL("https://www.facebook.com/" + version() + "/dialog/oauth");
     url.searchParams.set("client_id", setting("META_APP_ID"));
     const scopes = ["pages_show_list", "pages_read_engagement", "pages_manage_posts"];
@@ -128,13 +142,14 @@ export const redeemState = internalMutation({
     if (state.expiresAt <= Date.now()) return null;
     const client = await ctx.db.get(state.clientId);
     if (!client || client.ownerId !== state.ownerId) return null;
-    return { ownerId: state.ownerId, clientId: state.clientId, channel: state.channel };
+    return { ownerId: state.ownerId, clientId: state.clientId, channel: state.channel, zernioProfileId: state.zernioProfileId };
   },
 });
 
 const pendingValidator = v.object({
   pageId: v.optional(v.string()), pageName: v.string(),
   instagramId: v.optional(v.string()), encryptedToken: v.string(), tokenExpiresAt: v.optional(v.number()),
+  zernioAccountId: v.optional(v.string()),
 });
 
 async function discoverInstagramAccounts(token: string, expiresIn: unknown) {
@@ -192,9 +207,24 @@ export const oauthCallback = httpAction(async (ctx, request) => {
     const url = new URL(request.url);
     const state = url.searchParams.get("state") ?? "";
     const code = url.searchParams.get("code") ?? "";
-    if (!state || !code) return redirectResult("denied");
+    if (!state) return redirectResult("denied");
     const owner = await ctx.runMutation(internal.meta.redeemState, { digest: await digest(state) });
     if (!owner) return redirectResult("error");
+    if (owner.zernioProfileId) {
+      const { channel, clientId, ownerId, zernioProfileId } = owner;
+      if (channel !== "facebook" && channel !== "instagram") return redirectResult("error", clientId);
+      const accountId = url.searchParams.get("accountId");
+      if (!accountId || url.searchParams.get("connected") !== channel || url.searchParams.get("profileId") !== zernioProfileId)
+        return redirectResult("denied", clientId);
+      const account = await getZernioAccount(channel, zernioProfileId, accountId);
+      if (!account) return redirectResult("error", clientId);
+      await ctx.runMutation(internal.meta.saveCandidates, { ownerId, clientId, pages: [{
+        ...(channel === "facebook" ? { pageId: account.platformUserId } : { instagramId: account.platformUserId }),
+        pageName: account.name, zernioAccountId: account.accountId, encryptedToken: "",
+      }] });
+      return redirectResult("success", clientId);
+    }
+    if (!code) return redirectResult("denied", owner.clientId);
     const exchange = new URL("https://graph.facebook.com/" + version() + "/oauth/access_token");
     exchange.searchParams.set("client_id", setting("META_APP_ID"));
     exchange.searchParams.set("client_secret", setting("META_APP_SECRET"));
@@ -314,6 +344,7 @@ export const selectAccount = mutation({
       ownerId, clientId: candidate.clientId, pageId: candidate.pageId,
       pageName: candidate.pageName, instagramId: candidate.instagramId,
       tokenExpiresAt: candidate.tokenExpiresAt,
+      zernioAccountId: candidate.zernioAccountId,
       encryptedToken: candidate.encryptedToken, connectedAt: Date.now(),
       status: "active" as const,
     };
@@ -485,7 +516,7 @@ export const claimPost = internalMutation({
     return {
       postId, platform: post.platform, format: post.format, caption: post.caption,
       mediaUrl: post.mediaUrl, pageId: account.pageId,
-      instagramId: account.instagramId, encryptedToken: account.encryptedToken,
+      instagramId: account.instagramId, encryptedToken: account.encryptedToken, zernioAccountId: account.zernioAccountId,
     };
   },
 });
@@ -520,6 +551,14 @@ export const deliverPost = internalAction({
     const job = await ctx.runMutation(internal.meta.claimPost, { postId });
     if (!job) return;
     try {
+      if (job.zernioAccountId) {
+        const publishedId = await publishWithZernio({
+          postId, accountId: job.zernioAccountId, platform: job.platform === "Instagram" ? "instagram" : "facebook",
+          format: job.format, caption: job.caption, mediaUrl: job.mediaUrl,
+        });
+        await ctx.runMutation(internal.meta.completePost, { postId, outcome: "published", publishedId });
+        return;
+      }
       const accessToken = await decryptToken(job.encryptedToken);
       let request: MetaPublishRequest;
       if (job.platform === "Facebook") {
@@ -544,8 +583,8 @@ export const deliverPost = internalAction({
       // publicar; liberar o conteúdo para correção, sem tentar novamente.
       // Falha de rede, 5xx ou resposta ambígua: a mídia PODE ter sido publicada.
       // Manter o estado incerto e exigir conciliação manual (sem duplicar posts).
-      const rejected = error instanceof MetaGraphError &&
-        error.status >= 400 && error.status < 500;
+      const rejected = error instanceof ZernioRejected || (error instanceof MetaGraphError &&
+        error.status >= 400 && error.status < 500);
       const preparationFailed = error instanceof InstagramPreparationError;
       await ctx.runMutation(internal.meta.completePost, {
         postId,
@@ -553,7 +592,7 @@ export const deliverPost = internalAction({
         lastError: preparationFailed
           ? "A mídia não ficou pronta no Instagram. Confira o formato e a URL antes de reagendar."
           : rejected
-          ? "A Meta recusou a publicação. Verifique conta, permissões e mídia."
+          ? "A publicação foi recusada. Verifique conta, permissões e mídia."
           : "Resultado incerto: conferir na Meta antes de tentar novamente.",
       });
     }
