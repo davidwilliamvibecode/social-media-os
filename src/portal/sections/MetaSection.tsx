@@ -30,6 +30,11 @@ export function MetaSection() {
   const issueMcpKey = useAction(api.metaMcp.issueKey);
   const revokeMcpKey = useMutation(api.metaMcp.revokeKey);
   const mcpKeys = useQuery(api.metaMcp.listKeys) ?? [];
+  const operations = useQuery(
+    api.metaMcp.listOperations,
+    selectedClientId ? { clientId } : "skip",
+  ) ?? [];
+  const [provider, setProvider] = useState<"claude" | "chatgpt">("claude");
   const [newMcpKey, setNewMcpKey] = useState("");
   const backendUrl = (import.meta.env.VITE_CONVEX_URL as string | undefined) ?? "";
   const mcpUrl = backendUrl.replace(/\.convex\.cloud\/?$/, ".convex.site/mcp");
@@ -97,29 +102,47 @@ export function MetaSection() {
         description="Conecte Páginas oficiais dos clientes e agende publicações aprovadas no Instagram e Facebook."
       />
       <div className="rounded-xl border border-border bg-card p-4 space-y-3">
-        <h2 className="font-semibold text-sm">Conectar o Claude gratuito</h2>
+        <h2 className="font-semibold text-sm">Conectar Claude e ChatGPT</h2>
         <p className="text-xs text-muted-foreground">
-          Gere uma chave exclusiva para sua conta do Social Media OS. Ela permite ao Claude criar rascunhos e consultar contas. Para agendar é necessária aprovação prévia do conteúdo e autorização expressa. Uma nova chave revoga a anterior.
+          As duas IAs consultam o mesmo Social Media OS. Cada IA recebe uma chave
+          própria e revogável; trocar a chave de uma não desconecta a outra.
+          A possibilidade de cadastrar um conector próprio no ChatGPT depende
+          dos recursos habilitados na conta.
         </p>
-        <label htmlFor="meta-mcp-url" className="block text-xs">URL MCP (Convex)</label>
+        <label htmlFor="meta-mcp-url" className="block text-xs">URL MCP compartilhada (Convex)</label>
         <input id="meta-mcp-url" className="h-10 w-full rounded-md border border-input bg-background px-3 text-xs" readOnly value={mcpUrl} />
+        <label htmlFor="meta-ai-provider" className="block text-xs">IA que receberá a nova chave</label>
+        <select
+          id="meta-ai-provider"
+          value={provider}
+          onChange={(event) => {
+            setProvider(event.target.value as "claude" | "chatgpt");
+            setNewMcpKey("");
+          }}
+          className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+        >
+          <option value="claude">Claude</option>
+          <option value="chatgpt">ChatGPT</option>
+        </select>
         <Button size="sm" variant="outline" disabled={busy}
           onClick={async () => {
-            if (!window.confirm("Criar nova chave Claude? A chave anterior deixará de funcionar.")) return;
+            if (!window.confirm(
+              `Criar nova chave para ${provider === "claude" ? "Claude" : "ChatGPT"}? A chave anterior SOMENTE dessa IA será revogada.`
+            )) return;
             setBusy(true);
             try {
-              const token = await issueMcpKey({});
+              const token = await issueMcpKey({ provider });
               setNewMcpKey(token);
               toast.success("Chave gerada. Copie agora: não será exibida novamente.");
             } catch { toast.error("Não foi possível gerar uma chave."); }
             finally { setBusy(false); }
           }}>
-          Gerar chave para Claude
+          Gerar chave para {provider === "claude" ? "Claude" : "ChatGPT"}
         </Button>
         {newMcpKey && (
           <div className="rounded-md border p-3 space-y-2">
-            <p className="text-xs font-medium">Copie e guarde a chave. Não envie em chats ou repositórios.</p>
-            <input aria-label="Chave de conexão Claude" type="password" readOnly
+            <p className="text-xs font-medium">Chave de {provider === "claude" ? "Claude" : "ChatGPT"}: copie uma única vez. Não compartilhe em chats ou repositórios.</p>
+            <input aria-label="Chave de integração da IA" type="password" readOnly
               value={newMcpKey} className="w-full rounded-md border bg-background p-2 text-xs" />
             <Button size="sm" variant="outline" onClick={() => {
               void navigator.clipboard.writeText(newMcpKey)
@@ -131,9 +154,12 @@ export function MetaSection() {
         )}
         {mcpKeys.filter(key => !key.revokedAt).map(key => (
           <div key={key.id} className="flex items-center justify-between gap-3 text-xs">
-            <span>Chave ativa desde {new Date(key.createdAt).toLocaleString("pt-BR")}</span>
+            <span>
+              {key.provider === "claude" ? "Claude" : key.provider === "chatgpt" ? "ChatGPT" : "Chave legada"}:
+              {" "}ativa desde {new Date(key.createdAt).toLocaleString("pt-BR")}
+            </span>
             <Button variant="outline" size="sm" disabled={busy} onClick={async () => {
-              if (!window.confirm("Revogar acesso do Claude a este gestor?")) return;
+              if (!window.confirm("Revogar esta chave de integração?")) return;
               setBusy(true);
               try { await revokeMcpKey({ id: key.id }); setNewMcpKey(""); toast.success("Acesso revogado."); }
               catch { toast.error("Falha ao revogar."); }
@@ -142,9 +168,10 @@ export function MetaSection() {
           </div>
         ))}
         <p className="text-xs text-muted-foreground">
-          No Claude: Personalizar → Conectores → Adicionar conector personalizado → URL acima.
-          Configure a autenticação por cabeçalho Authorization: Bearer [sua chave].
-          A conexão só responderá após a ativação segura de META_MCP_ENABLED no Convex.
+          No serviço compatível com MCP, adicione a URL indicada e configure sua
+          respectiva chave em Authorization: Bearer [chave].
+          Nunca coloque a chave na URL. A função só responderá após
+          META_MCP_ENABLED ser habilitada no Convex.
         </p>
       </div>
 
@@ -321,6 +348,23 @@ export function MetaSection() {
                 }}
               >Cancelar</Button>
             )}
+          </div>
+        ))}
+      </div>
+
+      <div className="rounded-xl border border-border bg-card p-4 space-y-3">
+        <h2 className="text-sm font-semibold">Histórico de comandos das IAs</h2>
+        <p className="text-xs text-muted-foreground">
+          Operações registradas de criação e agendamento, com origem identificada.
+          Consultas não são gravadas neste histórico.
+        </p>
+        {operations.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Nenhum comando de IA registrado para esta empresa.</p>
+        ) : operations.slice(0, 30).map(item => (
+          <div key={item.id} className="flex flex-wrap items-center justify-between gap-2 border-b pb-2 text-xs">
+            <span className="font-medium">{item.provider === "claude" ? "Claude" : "ChatGPT"}</span>
+            <span>{item.operation === "create_draft" ? "Criou rascunho" : "Agendou publicação"}</span>
+            <span className="text-muted-foreground">{new Date(item.createdAt).toLocaleString("pt-BR")}</span>
           </div>
         ))}
       </div>
