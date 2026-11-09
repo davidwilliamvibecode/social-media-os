@@ -220,11 +220,30 @@ const schema = defineSchema(
     metaMcpKeys: defineTable({
       ownerId: v.id("users"),
       digest: v.string(),
+      // Compatibilidade de schema para registros antigos: chaves sem provider
+      // não podem autenticar após a migração para duas IAs.
+      provider: v.optional(v.union(v.literal("claude"), v.literal("chatgpt"))),
       createdAt: v.number(),
       revokedAt: v.optional(v.number()),
     })
       .index("by_digest", ["digest"])
       .index("by_owner", ["ownerId"]),
+
+    // Histórico auditável de escritas MCP, sem tokens, prompts ou segredos.
+    // CommandId evita reexecução acidental do mesmo comando por qualquer IA.
+    metaAiOperations: defineTable({
+      ownerId: v.id("users"),
+      clientId: v.id("clients"),
+      provider: v.union(v.literal("claude"), v.literal("chatgpt")),
+      operation: v.union(v.literal("create_draft"), v.literal("schedule_approved")),
+      commandId: v.string(),
+      fingerprint: v.string(),
+      resultId: v.string(),
+      createdAt: v.number(),
+    })
+      .index("by_owner", ["ownerId"])
+      .index("by_owner_command", ["ownerId", "operation", "commandId"])
+      .index("by_owner_client_fingerprint", ["ownerId", "clientId", "operation", "fingerprint"]),
 
     metaOAuthStates: defineTable({
       ownerId: v.id("users"),
