@@ -2,7 +2,7 @@
 import { httpRouter } from "convex/server";
 import { auth } from "./auth";
 import { oauthCallback } from "./meta";
-import { handleMcp } from "./metaMcp";
+import { handleMcp, handleMcpGet } from "./metaMcp";
 
 const http = httpRouter();
 
@@ -12,5 +12,6 @@ auth.addHttpRoutes(http);
 http.route({ path: "/meta/oauth/callback", method: "GET", handler: oauthCallback });
 // Remote MCP: credential guarded, disabled unless META_MCP_ENABLED=true.
 http.route({ path: "/mcp", method: "POST", handler: handleMcp });
+http.route({ path: "/mcp", method: "GET", handler: handleMcpGet });
 
 export default http;
