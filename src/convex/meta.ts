@@ -277,6 +277,19 @@ export const disconnectAccount = mutation({
     const ownerId = await activeUser(ctx);
     const row = await ctx.db.get(accountId);
     if (!ownerId || !row || row.ownerId !== ownerId) throw new Error("Conexão não encontrada.");
+    // Desconectar também cancela os agendamentos que usariam esta credencial.
+    // Sem isso, reconectar a mesma Página antes do horário poderia reativá-los.
+    const pending = await ctx.db.query("metaPosts")
+      .withIndex("by_account", q => q.eq("accountId", accountId))
+      .collect();
+    for (const post of pending) {
+      if (post.ownerId !== ownerId || post.status !== "scheduled") continue;
+      if (post.scheduledJobId) await ctx.scheduler.cancel(post.scheduledJobId);
+      await ctx.db.patch(post._id, { status: "cancelled", updatedAt: Date.now() });
+      const content = await ctx.db.get(post.contentId);
+      if (content && content.ownerId === ownerId && content.status === "Scheduled")
+        await ctx.db.patch(content._id, { status: "Approved" });
+    }
     await ctx.db.patch(row._id, { status: "revoked", encryptedToken: "" });
   },
 });
@@ -372,6 +385,9 @@ export const claimPost = internalMutation({
     if (!post || post.status !== "scheduled" || post.scheduledAt > Date.now()) return null;
     if (process.env.META_PUBLISHING_ENABLED !== "true") {
       await ctx.db.patch(postId, { status: "failed", updatedAt: Date.now(), lastError: "Integração desativada." });
+      const content = await ctx.db.get(post.contentId);
+      if (content && content.ownerId === post.ownerId && content.status === "Scheduled")
+        await ctx.db.patch(content._id, { status: "Approved" });
       return null;
     }
     const account = await ctx.db.get(post.accountId);
