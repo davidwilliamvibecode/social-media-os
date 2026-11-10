@@ -1,26 +1,27 @@
-# Integração direta da Meta com Social Media OS + Claude
+# Publicações do Instagram e Facebook pelo Social Media OS
 
-**Atualização: 8 de novembro de 2026.** O código foi integrado somente à branch `main`. Nenhuma conta Meta foi conectada, nenhum token real foi coletado e nenhuma publicação real foi feita. A implantação no Convex/Cloudflare ainda depende das configurações descritas abaixo. **Não considerar comercialmente validado antes dos testes reais e da aprovação de permissões da Meta.**
+Novas conexões usam o Upload-Post. Valide o login e uma publicação agendada em uma conta de teste antes de oferecer a integração a clientes.
 
 ## Visão geral do sistema
 
 A mesma instalação Social Media OS poderá organizar vários gestores, com diversos clientes por gestor. O backend Convex valida `ownerId` e `clientId` em conexões, rascunhos, consultas e publicações.
 
 1. O gestor cadastra uma empresa em `Clientes`.
-2. No painel `Publicações Meta`, escolhe a empresa e usa **Conectar Instagram** para entrar com uma conta profissional ou **Conectar Facebook** para autorizar uma Página que administra. O Zernio fornece a autorização das duas redes.
-3. Depois do login oficial, confirma o vínculo da conta com a empresa escolhida. O Social Media OS verifica a conta retornada no perfil Zernio dessa empresa.
+2. No painel `Publicações Meta`, escolhe a empresa e usa **Conectar Instagram** para entrar com uma conta profissional (Empresa ou Criador) ou **Conectar Facebook** para autorizar uma Página que administra. A conexão do Instagram funciona sem vincular uma Página ou portfólio empresarial.
+3. Depois do login oficial, confirma o vínculo da conta com a empresa escolhida. O Social Media OS consulta as contas autorizadas no Upload-Post e identifica o destino pelo ID da rede social.
 4. O gestor/Claude prepara o conteúdo no calendário e passa pelo status **Aprovado**.
 5. O gestor ou Claude agenda com data, horário, Página, legenda e mídia aprovada.
-6. O Convex executa o agendamento no horário. Conexões novas publicam pela API do Zernio e conexões antigas mantêm a integração original.
+6. O Convex dispara o envio pela API do Upload-Post no horário agendado e consulta a confirmação da publicação. Conexões antigas continuam com o provedor associado quando foram criadas.
 7. O histórico guarda status e ID da publicação. Em falhas de resposta após o envio, mantém **incerto**, sem repetir para evitar duplicação.
 
-Para ativar novas conexões, configure `ZERNIO_API_KEY` somente no Convex de produção e mantenha `META_REDIRECT_URI` e `META_FRONTEND_ORIGIN` configurados. O app cria um perfil Zernio por empresa. Antes de habilitar `META_PUBLISHING_ENABLED`, confira a conta autorizada e prepare uma publicação de teste aprovada. Para remover a autorização externa ou encerrar a cobrança da conexão, desconecte a conta também no painel Zernio.
+Para ativar novas conexões, configure `UPLOAD_POST_API_KEY` somente no Convex de produção e mantenha `META_REDIRECT_URI` e `META_FRONTEND_ORIGIN` configurados. O app cria um perfil Upload-Post por empresa. Antes de habilitar `META_PUBLISHING_ENABLED`, confira a conta autorizada e prepare uma publicação de teste aprovada. Para revogar a autorização no provedor, desconecte a rede social também no painel Upload-Post.
 
 **Escopo de publicações implantado no backend:** Facebook Page texto/foto e Instagram profissional imagem única/Reel. Stories, carrosséis e vídeos Facebook não foram implementados. O conector do Canva pode ajudar com a criação do conteúdo, mas uma URL de mídia HTTPS pública acessível pela Meta é necessária nas publicações com imagem/vídeo.
 
 ## Código adicionado
 
 - `src/data/metaGraph.ts`: adaptador de publicação na API Meta; tokens em header, erros sanitizados.
+- `src/data/uploadPost.ts` implementa o login oficial por canal, a confirmação do destino e o envio pelo Upload-Post.
 - `src/convex/meta.ts`: OAuth de Páginas, criptografia AES-GCM de tokens em repouso, conexão por cliente, agendamento persistente, verificação de status e proteção contra duplicação.
 - `src/convex/metaMcp.ts`: conector MCP remoto protegido por chave individual; criação de rascunhos e agendamentos aprovados.
 - `src/convex/http.ts`: endpoints `GET /meta/oauth/callback` e `POST /mcp`.
@@ -43,7 +44,7 @@ Não ativar sem terminar a implantação e os testes reais:
 
 **Default com flags ausentes é seguro: desativado.** Não declarar testes reais concluídos a partir dos testes simulados.
 
-### Variáveis obrigatórias no Convex (nunca expor)
+### Variáveis do Convex para conexões legadas da API Meta
 
 - `META_APP_ID`: App ID da Meta.
 - `META_APP_SECRET`: segredo do aplicativo Meta.

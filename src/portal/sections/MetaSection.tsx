@@ -66,7 +66,7 @@ export function MetaSection() {
     if (!selectedClientId || busy) return;
     setBusy(true);
     try {
-      const url = await startConnection({ clientId, channel, provider: "zernio" });
+      const url = await startConnection({ clientId, channel, provider: "uploadPost" });
       window.location.assign(url);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Não foi possível iniciar a Meta.");
@@ -200,7 +200,7 @@ export function MetaSection() {
           ))}
         </select>
         <p className="text-xs text-muted-foreground">
-          Entre no Instagram com uma conta profissional ou no Facebook para escolher uma Página que você administra.
+          Entre no Instagram com uma conta de Empresa ou Criador. No Facebook, entre para escolher uma Página que você administra.
         </p>
         <div className="flex flex-wrap gap-2">
           <Button disabled={!selectedClientId || busy} onClick={() => void connect("instagram")}>
@@ -212,12 +212,12 @@ export function MetaSection() {
         </div>
         {connectionResult === "no-pages" && (
           <p role="status" className="text-sm text-muted-foreground">
-            Nenhuma Página apta foi retornada. Confira as permissões e, se selecionou Instagram, o vínculo com uma conta profissional.
+            Nenhuma Página do Facebook foi autorizada. Confira se você tem permissão para publicar na Página.
           </p>
         )}
         {connectionResult === "no-instagram" && (
           <p role="status" className="text-sm text-muted-foreground">
-            Nenhuma conta profissional do Instagram foi compartilhada. Confira a conta e o portfólio selecionados na Meta.
+            Nenhuma conta profissional do Instagram foi autorizada. Confira se a conta é de Empresa ou Criador.
           </p>
         )}
         {connectionResult === "denied" && <p role="status" className="text-sm text-muted-foreground">A autorização foi cancelada ou ficou incompleta.</p>}
@@ -343,7 +343,7 @@ export function MetaSection() {
         />
         <label className="flex items-start gap-2 text-xs">
           <input type="checkbox" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} />
-          <span>Confirmei empresa, Página, legenda, mídia e horário. Autorizo o agendamento e a publicação automática neste destino.</span>
+          <span>Confirmei empresa, destino, legenda, mídia e horário. Autorizo a publicação automática neste destino.</span>
         </label>
         <Button
           disabled={busy || !contentItem || !account || !localDateTime || !confirmed}

@@ -54,6 +54,122 @@ async function setup() {
 }
 
 describe("Conexão Meta por canal", () => {
+  test("Upload-Post vincula as duas redes e publica somente no destino confirmado", async () => {
+    const { t, alice, bob, ids } = await setup();
+    const settings = {
+      UPLOAD_POST_API_KEY: "chave-teste", META_REDIRECT_URI: "https://backend.example.test/meta/oauth/callback",
+      META_FRONTEND_ORIGIN: "https://app.example.test", META_PUBLISHING_ENABLED: "true",
+    };
+    const previous = Object.keys(settings).map(key => [key, process.env[key]] as const);
+    Object.assign(process.env, settings);
+    const instagramId = "17840000000000001";
+    const pageId = "109876543210987";
+    const callbacks = new Map<string, URL>();
+    const uploads = new Map<string, string>();
+    let profile = "";
+    let instagramDestination = instagramId;
+    const provider = spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = new URL(String(input));
+      expect(url.origin).toBe("https://api.upload-post.com");
+      const headers = new Headers(init?.headers);
+      expect(headers.get("authorization")).toBe("Apikey chave-teste");
+      if (url.pathname === "/api/uploadposts/users") {
+        expect(profile).toBe("");
+        profile = JSON.parse(String(init?.body)).username;
+        return Response.json({ success: true, profile: { username: profile } }, { status: 201 });
+      }
+      if (url.pathname === "/api/uploadposts/users/facebook-page") {
+        expect(url.searchParams.get("profile_username")).toBe(profile);
+        return Response.json({ success: true, selected_page_id: pageId,
+          pages: [{ id: pageId, name: "Página autorizada" }, { id: "999999999", name: "Outra Página" }] });
+      }
+      if (url.pathname.startsWith("/api/uploadposts/users/")) {
+        if (!profile) return new Response(null, { status: 404 });
+        expect(url.pathname.endsWith(`/${profile}`)).toBe(true);
+        return Response.json({ success: true, profile: { username: profile, social_accounts: {
+          instagram: { username: instagramDestination, handle: "perfil_teste" },
+        } } });
+      }
+      if (url.pathname.includes("/oauth/")) {
+        const platform = url.pathname.split("/").at(-2)!;
+        const body = JSON.parse(String(init?.body));
+        expect(body.profile).toBe(profile);
+        callbacks.set(platform, new URL(body.redirect_url));
+        return Response.json({ success: true, platform, authorize_url: `https://www.${platform}.com/oauth/authorize` });
+      }
+      if (url.pathname === "/api/uploadposts/status") {
+        const platform = uploads.get(url.searchParams.get("request_id") ?? "");
+        expect(platform).toBeDefined();
+        return Response.json({ status: "completed", results: [{ platform, success: true, platform_post_id: `live-${platform}` }] });
+      }
+      const form = init?.body as FormData;
+      const platform = String(form.get("platform[]"));
+      const requestId = String(form.get("request_id"));
+      expect(uploads.has(requestId)).toBe(false);
+      expect(form.get("user")).toBe(profile);
+      expect(form.get("async_upload")).toBe("true");
+      expect(headers.get("idempotency-key")).toBe(requestId);
+      expect(url.pathname).toBe(platform === "instagram" ? "/api/upload_photos" : "/api/upload_text");
+      expect(form.get("photos[]")).toBe(platform === "instagram" ? "https://example.test/arte.jpg" : null);
+      expect(form.get("facebook_page_id")).toBe(platform === "facebook" ? pageId : null);
+      uploads.set(requestId, platform);
+      return Response.json({ request_id: requestId }, { status: 202 });
+    });
+    try {
+      await expect(bob.action(api.meta.startConnection, {
+        clientId: ids.aliceClient, channel: "instagram", provider: "uploadPost",
+      })).rejects.toThrow("Cliente sem acesso");
+      for (const channel of ["instagram", "facebook"] as const) {
+        const clientId = ids.aliceClient;
+        const auth = await alice.action(api.meta.startConnection, { clientId, channel, provider: "uploadPost" });
+        expect(new URL(auth).hostname).toBe(`www.${channel}.com`);
+        const callback = callbacks.get(channel)!;
+        callback.searchParams.set("connect_status", "success");
+        callback.searchParams.set("platform", channel);
+        const finish = () => t.fetch(callback.pathname + callback.search);
+        expect((await finish()).headers.get("location")).toContain(`connection=success&client=${clientId}`);
+        expect((await finish()).headers.get("location")).toContain("connection=error");
+        const candidates = await alice.query(api.meta.listCandidates, { clientId });
+        expect(candidates).toHaveLength(1);
+        expect(channel === "instagram" ? candidates[0].instagramId : candidates[0].pageId)
+          .toBe(channel === "instagram" ? instagramId : pageId);
+        const accountId = await alice.mutation(api.meta.selectAccount, { candidateId: candidates[0].id });
+        const contentId = await t.run(async ctx => {
+          const { _id, _creationTime, ...content } = (await ctx.db.get(ids.content))!;
+          void _id; void _creationTime;
+          return ctx.db.insert("content", { ...content, platform: channel === "instagram" ? "Instagram" : "Facebook" });
+        });
+        const schedule = () => alice.mutation(api.meta.schedulePost, {
+          contentId, accountId, scheduledAt: Date.now() + 120_000,
+          ...(channel === "instagram" ? { mediaUrl: "https://example.test/arte.jpg" } : {}),
+        });
+        const deliver = async (postId: Awaited<ReturnType<typeof schedule>>) => {
+          await t.run(ctx => ctx.db.patch(postId, { scheduledAt: Date.now() - 1 }));
+          await t.action(internal.meta.deliverPost, { postId });
+          return t.run(ctx => ctx.db.get(postId));
+        };
+        if (channel === "instagram") {
+          const postId = await schedule();
+          instagramDestination = "17840000000000002";
+          expect(await deliver(postId)).toMatchObject({ status: "failed" });
+          expect(uploads.size).toBe(0);
+          instagramDestination = instagramId;
+        }
+        const postId = await schedule();
+        expect(await deliver(postId)).toMatchObject({ status: "published", publishedId: `live-${channel}` });
+        await t.action(internal.meta.deliverPost, { postId });
+        expect(uploads.get(`smos-${postId}`)).toBe(channel);
+      }
+      expect(uploads.size).toBe(2);
+    } finally {
+      provider.mockRestore();
+      for (const [key, value] of previous) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  });
+
   test("Zernio vincula Instagram e Facebook separadamente e publica pelo destino aprovado", async () => {
     const { t, alice, bob, ids } = await setup();
     const settings = {
